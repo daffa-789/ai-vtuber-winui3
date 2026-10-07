@@ -1,0 +1,82 @@
+<Project>
+
+  <!--
+    PENUNJUK KE CUBISM SDK FOR NATIVE, BUKAN ISI SDK-NYA.
+
+    Cubism SDK for Native harus diunduh sendiri dari live2d.com di bawah
+    lisensi Live2D. Core dikirim sebagai static library (Live2DCubismCore_MT.lib),
+    bukan DLL, dan tidak boleh didistribusikan sebagai file lepas.
+
+    Cara mengatur:
+      opsi 1 (disarankan): set variabel lingkungan CUBISM_SDK_DIR
+              setx CUBISM_SDK_DIR "C:\sdk\CubismSdkForNative-5-r.5"
+      opsi 2 : ubah nilai default di bawah ini
+
+    CATATAN PENTING: Cubism 5 mengubah tiga hal dari versi 4.
+    Diverifikasi 2026-10-06 terhadap paket nyata CubismSdkForNative-5-r.5.zip.
+
+      1. Nama header Core berubah.
+         Cubism 4 : Core\include\Live2DCubismCore.hpp
+         Cubism 5 : Core\include\Live2DCubismCore.h     (tanpa akhiran "pp")
+
+      2. Nama folder arsitektur berubah.
+         Cubism 4 : Core\lib\windows\x64\<vcver>\
+         Cubism 5 : Core\lib\windows\x86_64\<vcver>\    (bukan "x64")
+
+      3. Renderer D3D11 tidak lagi di dalam Framework.
+         Cubism 4 : Framework\src\Rendering\D3D11\
+         Cubism 5 : Samples\D3D11\                      (ada di dalam paket)
+
+    Kalau salah satu dari tiga ini dibiarkan, MSBuild melaporkan
+    CubismSdkAvailable=false secara diam-diam dan target native dilewati
+    tanpa peringatan. Karena itu deteksi di bawah menerima kedua format,
+    supaya tidak bergantung pada versi SDK yang kebetulan terpasang.
+
+    vcver yang tersedia di paket: 141, 142, 143.
+    143 dipakai karena toolset MSVC mesin ini adalah 14.51, yaitu v143.
+  -->
+
+  <PropertyGroup>
+    <CubismSdkDir Condition="'$(CubismSdkDir)' == ''">$(EnvCUBISM_SDK_DIR)</CubismSdkDir>
+    <CubismSdkDir Condition="'$(CubismSdkDir)' == ''">..\_cubism_sdk</CubismSdkDir>
+  </PropertyGroup>
+
+  <!-- Terima header Cubism 5 (.h) sekaligus Cubism 4 (.hpp). -->
+  <PropertyGroup>
+    <CubismCoreHeader Condition="Exists('$(CubismSdkDir)\Core\include\Live2DCubismCore.h')">Live2DCubismCore.h</CubismCoreHeader>
+    <CubismCoreHeader Condition="'$(CubismCoreHeader)' == ''">Live2DCubismCore.hpp</CubismCoreHeader>
+  </PropertyGroup>
+
+  <!-- Cubism 5 memakai x86_64, bukan x64. -->
+  <PropertyGroup>
+    <CubismArchDir Condition="'$(Platform)' == 'x64'">x86_64</CubismArchDir>
+    <CubismArchDir Condition="'$(Platform)' == 'Win32'">x86</CubismArchDir>
+    <CubismArchDir Condition="'$(CubismArchDir)' == ''">x86_64</CubismArchDir>
+    <CubismVcVer Condition="'$(CubismVcVer)' == ''">143</CubismVcVer>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <CubismSdkAvailable Condition="Exists('$(CubismSdkDir)\Core\include\$(CubismCoreHeader)')">true</CubismSdkAvailable>
+    <CubismSdkAvailable Condition="'$(CubismSdkAvailable)' == ''">false</CubismSdkAvailable>
+
+    <CubismSdkCoreInclude>$(CubismSdkDir)\Core\include</CubismSdkCoreInclude>
+    <CubismSdkCoreLibDir>$(CubismSdkDir)\Core\lib\windows\$(CubismArchDir)\$(CubismVcVer)</CubismSdkCoreLibDir>
+    <CubismSdkCoreLib>$(CubismSdkCoreLibDir)\Live2DCubismCore_MT.lib</CubismSdkCoreLib>
+    <CubismSdkFrameworkSrc>$(CubismSdkDir)\Framework\src</CubismSdkFrameworkSrc>
+
+    <!-- Cubism 5 menaruh renderer di Samples, Cubism 4 di dalam Framework. -->
+    <CubismSdkD3D11 Condition="Exists('$(CubismSdkDir)\Samples\D3D11')">$(CubismSdkDir)\Samples\D3D11</CubismSdkD3D11>
+    <CubismSdkD3D11 Condition="'$(CubismSdkD3D11)' == ''">$(CubismSdkDir)\Framework\src\Rendering\D3D11</CubismSdkD3D11>
+  </PropertyGroup>
+
+  <!--
+    Dibatasi hanya ke proyek native. Kalau dipasang ke semua proyek, setiap
+    build C# akan selalu mengeluarkan peringatan ini selama SDK belum ada,
+    dan itu justru menutupi peringatan yang sungguhan.
+  -->
+  <Target Name="CubismSdkPeriksa" BeforeTargets="Build"
+          Condition="'$(CubismSdkAvailable)' != 'true' AND '$(MSBuildProjectName)' == 'SilverWolf.Live2D'">
+    <Warning Text="Cubism SDK tidak ditemukan di '$(CubismSdkDir)'. Setel CUBISM_SDK_DIR atau perbaiki build/CubismSdk.props." />
+  </Target>
+
+</Project>

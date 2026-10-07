@@ -1,0 +1,81 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  Manifest paket MSIX. TIDAK DIPAKAI saat ini.
+
+  Aplikasi dibangun dengan WindowsPackageType=None (unpackaged) karena aset
+  ~7 GB tidak mungkin masuk paket dan llama-server.exe butuh folder yang bisa
+  ditulis. File ini disimpan supaya jalur MSIX tetap terbuka untuk nanti,
+  misalnya kalau aset dipisah ke luar paket dan diunduh saat pertama dijalankan.
+
+  Kalau jalur MSIX diaktifkan kembali, kerja yang masih tertunda:
+    - Identity.Name minta diganti: masih GUID template, belum identitas Silver Wolf
+    - DisplayName/Description masih "AI Vtuber WINUI3"
+    - Publisher "CN=Daffa" harus cocok dengan sertifikat penandatanganan
+    - Capabilities: tambah uap:Capability Name="internetClient" kalau nanti
+      bicara ke Ollama di luar loopback
+-->
+
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:systemai="http://schemas.microsoft.com/appx/manifest/systemai/windows10"
+  IgnorableNamespaces="uap rescap systemai">
+
+  <Identity
+    Name="a88e61f1-5d37-45ed-8cda-b5a31814ee14"
+    Publisher="CN=Daffa"
+    Version="0.1.0.0" />
+
+  <mp:PhoneIdentity PhoneProductId="a88e61f1-5d37-45ed-8cda-b5a31814ee14" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+
+  <Properties>
+    <DisplayName>Silver Wolf</DisplayName>
+    <PublisherDisplayName>Daffa</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26226.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26226.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="App"
+      Executable="$targetnametoken$.exe"
+      EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+        DisplayName="Silver Wolf"
+        Description="Silver Wolf — pendamping AI lokal"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!--
+      runFullTrust: aplikasi desktop penuh (bukan UWP sandbox). Diperlukan
+      untuk menjalankan llama-server.exe sebagai proses anak.
+    -->
+    <rescap:Capability Name="runFullTrust" />
+
+    <!--
+      systemAIModels: diwarisi dari template. SAAT INI TIDAK DIPAKAI.
+      LLM berjalan lewat llama.cpp lokal (loopback HTTP) dan ONNX Runtime
+      dijalankan in-process, jadi Windows AI Foundry tidak diperlukan.
+      Boleh dihapus kalau jalur MSIX diaktifkan; dibiarkan agar tidak ada
+      kejutan kalau nanti Phi Silica dipertimbangkan.
+    -->
+    <systemai:Capability Name="systemAIModels"/>
+  </Capabilities>
+</Package>

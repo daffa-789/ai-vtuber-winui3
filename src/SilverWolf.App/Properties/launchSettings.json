@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Silver Wolf (Unpackaged)": {
+      "commandName": "Project"
+    },
+    "Silver Wolf (MSIX)": {
+      "commandName": "MsixPackage"
+    }
+  }
+}

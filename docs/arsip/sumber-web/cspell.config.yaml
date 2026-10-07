@@ -1,0 +1,53 @@
+version: "0.2"
+language: en,id
+words:
+  - silverwolf
+  - airi
+  - moeru
+  - onnx
+  - onnxruntime
+  - rmvpe
+  - hubert
+  - contentvec
+  - faiss
+  - piper
+  - espeak
+  - voxcpm
+  - xsai
+  - eventa
+  - pinia
+  - unocss
+  - turbo
+  - tamagotchi
+  - live2d
+  - cubism
+  - moc3
+  - model3
+  - physics3
+  - cdi3
+  - exp3
+  - motion3
+  - artmesh
+  - lipsync
+  - unovtuber
+  - jalur
+  - suara
+  - konfig
+  - memori
+  - wajah
+  - ekspresi
+  - keadaan
+  - iriama
+  - kalimat
+  - mikrofon
+  - setelan
+  - tampak
+  - silverwolfjp
+ignorePaths:
+  - var/**
+  - bin/**
+  - assets/**
+  - public/**
+  - web/**
+  - model/**
+  - "**/*.py"

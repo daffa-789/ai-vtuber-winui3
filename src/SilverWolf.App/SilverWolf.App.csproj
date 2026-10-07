@@ -1,0 +1,197 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>SilverWolf.App</RootNamespace>
+    <AssemblyName>SilverWolf.App</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <Nullable>enable</Nullable>
+    <DefaultLanguage>id</DefaultLanguage>
+  </PropertyGroup>
+
+  <!--
+    ==========================================================================
+    MODE APLIKASI: UNPACKAGED + WINDOWS APP SDK SELF-CONTAINED
+    ==========================================================================
+
+    Kenapa UNPACKAGED, bukan MSIX (rencana §11):
+      - Aset aplikasi ~7 GB (model .gguf 5,13 GB + ONNX + Live2D). Tidak mungkin
+        dibundel ke dalam MSIX.
+      - Folder install MSIX bersifat READ-ONLY saat runtime, padahal
+        llama-server.exe butuh CWD yang bisa ditulis dan harus menemukan ~20
+        DLL Vulkan di sebelahnya.
+
+    Kenapa SELF-CONTAINED:
+      Keadaan sebelumnya: build sukses tetapi aplikasi gagal start dengan
+
+        System.TypeInitializationException ... COMException (0x80040154)
+        REGDB_E_CLASSNOTREG
+        at ...DeploymentManagerCS.AutoInitialize.AccessWindowsAppSDK()
+
+      Artinya Windows App SDK Runtime belum terpasang di mesin ini. Itu masalah
+      lingkungan, bukan kode. Dengan WindowsAppSDKSelfContained=true, runtime
+      ikut ke folder output sehingga aplikasi berjalan tanpa prasyarat
+      instalasi apa pun — sekaligus menyelesaikan prasyarat P5 dari rencana.
+      Ini juga bentuk distribusi yang tepat untuk aplikasi offline 7 GB.
+
+    Catatan: Package.appxmanifest tetap disimpan di project ini untuk jalur
+    MSIX opsional nanti (mis. aset dipisah ke luar paket). Selama
+    WindowsPackageType=None, manifest itu tidak dipakai.
+  -->
+  <PropertyGroup>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+
+    <!--
+      ========================================================================
+      BOOTSTRAP DIMATIKAN — ini perbaikan untuk STATUS_FAIL_FAST_EXCEPTION
+      ========================================================================
+
+      Gejala (2026-10-07 00:19): SilverWolf.App.exe langsung mati dengan
+      0xC0000602 (STATUS_FAIL_FAST_EXCEPTION). Tidak ada keluaran stderr,
+      tidak ada entri "Application Error" di Event Log, tidak ada laporan WER,
+      dan Visual Studio hanya bilang "A fatal exception occurred".
+
+      Pencatatan bertahap (Diagnostics/CrashLog) mempersempitnya: log berhenti
+      di antara "OnLaunched mulai" dan baris pertama konstruktor MainWindow.
+      Artinya yang gagal adalah konstruktor dasar Microsoft.UI.Xaml.Window —
+      bukan kode kita.
+
+      Penyebabnya: dua sumber Windows App SDK dimuat sekaligus.
+        - DLL self-contained di folder output (Microsoft.WindowsAppRuntime.dll,
+          Microsoft.ui.xaml.dll) — dari WindowsAppSDKSelfContained=true
+        - Runtime sistem Microsoft.WindowsAppRuntime.2 v2.5.1.0, yang ikut
+          terpasang saat VS Installer memasang workload WinUI
+
+      WindowsAppSdkBootstrapInitialize=true membuat aplikasi mem-bootstrap ke
+      runtime SISTEM, sementara DLL LOKAL tetap ada. Dua Microsoft.ui.xaml.dll
+      berbeda dalam satu proses membuat XAML gagal membuat Window → fail-fast.
+
+      Sebelumnya ini tampak "berhasil" hanya karena runtime 2.5.1 belum ada di
+      sistem, sehingga bootstrap tidak menemukan apa pun dan DLL lokal yang
+      dipakai. Begitu VS Installer memasangnya, konfigurasi gandanya pecah.
+
+      Untuk aplikasi SELF-CONTAINED, bootstrap memang tidak diperlukan: seluruh
+      runtime sudah ada di folder aplikasi. Jadi ini juga bentuk yang benar,
+      bukan sekadar tambalan.
+    -->
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+  </PropertyGroup>
+
+
+  <ItemGroup>
+    <Content Include="Assets\SplashScreen.scale-200.png" />
+    <Content Include="Assets\LockScreenLogo.scale-200.png" />
+    <Content Include="Assets\Square150x150Logo.scale-200.png" />
+    <Content Include="Assets\Square44x44Logo.scale-200.png" />
+    <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+    <Content Include="Assets\StoreLogo.png" />
+    <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <!--
+    Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
+    Tools extension to be activated for this project even if the Windows App SDK Nuget
+    package has not yet been restored.
+  -->
+  <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+    <ProjectCapability Include="Msix" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <!-- MVVM: ObservableObject, [ObservableProperty], AsyncRelayCommand, WeakReferenceMessenger -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SilverWolf.Core\SilverWolf.Core.csproj" />
+    <ProjectReference Include="..\SilverWolf.Services\SilverWolf.Services.csproj" />
+  </ItemGroup>
+
+  <!--
+    ==========================================================================
+    REFERENSI KE PROYEK NATIVE — SENGAJA BERSYARAT
+    ==========================================================================
+
+    Prasyarat C++ sudah lengkap (Windows SDK 10.0.28000, MSVC 14.51, Cubism SDK
+    5 R.5), jadi godaannya tinggal mengaktifkan referensi ini begitu saja.
+    JANGAN.
+
+    vcxproj mengimpor $(VCTargetsPath)\Microsoft.Cpp.Default.props dan
+    Microsoft.Cpp.targets. Keduanya hanya ada di bawah instalasi Visual Studio
+    yang memasang workload C++. MSBuild yang dibundel .NET CLI tidak menyetel
+    VCTargetsPath, sehingga referensi ini gagal dengan
+
+        error MSB4019: The imported project "Microsoft.Cpp.Default.props"
+        was not found.
+
+    dan itu MEMATIKAN `dotnet build SilverWolf.sln`, padahal perintah itu
+    adalah verifikasi resmi proyek (harus 0 error / 0 warning).
+
+    Karena itu dibatasi ke MSBuildRuntimeType == Full, yang hanya bernilai
+    demikian pada MSBuild Visual Studio (msbuild.exe). Nilainya 'Core' pada
+    dotnet CLI. Hasilnya:
+      - dotnet build  -> native dilewati, C# tetap hijau (tanpa Live2D)
+      - build di VS   -> native ikut terbangun
+  -->
+  <ItemGroup Condition="'$(CubismSdkAvailable)' == 'true' AND '$(MSBuildRuntimeType)' == 'Full'">
+    <ProjectReference Include="..\..\native\SilverWolf.Live2D\SilverWolf.Live2D.vcxproj" />
+  </ItemGroup>
+
+  <!--
+    Salin DLL native ke folder output bila tersedia. Condition Exists() penting:
+    berkas ini belum ada sampai pengguna membangun proyek native di Visual
+    Studio. Tanpa condition, build akan gagal di mesin yang belum punya DLL.
+  -->
+  <ItemGroup>
+    <Content Include="..\..\native\SilverWolf.Live2D\bin\x64\$(Platform)\$(Configuration)\SilverWolf.Live2D.dll"
+             Link="SilverWolf.Live2D.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\native\SilverWolf.Live2D\bin\x64\$(Platform)\$(Configuration)\SilverWolf.Live2D.dll')" />
+    <Content Include="..\..\native\SilverWolf.Live2D\bin\x64\$(Platform)\$(Configuration)\FrameworkShaders\CubismEffect.fx"
+             Link="FrameworkShaders\CubismEffect.fx"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\native\SilverWolf.Live2D\bin\x64\$(Platform)\$(Configuration)\FrameworkShaders\CubismEffect.fx')" />
+    <Content Include="..\..\native\SilverWolf.Live2D\bin\x64\$(Platform)\$(Configuration)\FrameworkShaders\CubismBlendMode.fx"
+             Link="FrameworkShaders\CubismBlendMode.fx"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\native\SilverWolf.Live2D\bin\x64\$(Platform)\$(Configuration)\FrameworkShaders\CubismBlendMode.fx')" />
+  </ItemGroup>
+
+  <!--
+    Defining the "HasPackageAndPublishMenuAddedByProject" property here allows the Solution
+    Explorer "Package and Publish" context menu entry to be enabled for this project even if
+    the Windows App SDK Nuget package has not yet been restored.
+  -->
+  <PropertyGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+    <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
+  </PropertyGroup>
+
+  <!-- Publish Properties -->
+  <!--
+    P4: PublishTrimmed DIBUAT FALSE. Trimming + XAML (XamlTypeInfo.g.cs,
+    IXamlMetadataProvider) + aktivasi WinRT adalah sumber kerusakan yang sudah dikenal.
+    PublishSingleFile juga tidak didukung untuk WinUI.
+  -->
+  <PropertyGroup>
+    <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
+    <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
+    <PublishTrimmed>False</PublishTrimmed>
+    <PublishSingleFile>False</PublishSingleFile>
+  </PropertyGroup>
+
+</Project>

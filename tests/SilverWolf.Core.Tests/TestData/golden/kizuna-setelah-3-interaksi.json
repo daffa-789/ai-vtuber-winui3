@@ -1,0 +1,74 @@
+{
+  "format": "@aituber-onair/kizuna",
+  "version": 1,
+  "users": {
+    "master": {
+      "id": "master",
+      "displayName": "master",
+      "role": "guest",
+      "points": 13.690000000000001,
+      "level": 1,
+      "achievements": [],
+      "scars": [],
+      "triggeredThresholds": [],
+      "stats": {
+        "totalInteractions": 3,
+        "totalPointsEarned": 13.690000000000001,
+        "continuity": {
+          "streak": 1,
+          "totalActiveBuckets": 1,
+          "lastContactAt": "2026-10-06T17:28:37.688Z",
+          "lastBucketKey": "day:20732",
+          "lastBucketIndex": 20732
+        },
+        "favoriteEmotions": {},
+        "interactionHistory": [
+          {
+            "id": "interaction_1791307717423_pzgv87",
+            "timestamp": "2026-10-06T17:28:37.422Z",
+            "points": 4,
+            "kind": "message",
+            "appliedRules": [],
+            "valence": "positive"
+          },
+          {
+            "id": "interaction_1791307717683_en09m2",
+            "timestamp": "2026-10-06T17:28:37.683Z",
+            "points": 6.800000000000001,
+            "kind": "touch",
+            "appliedRules": [],
+            "valence": "positive"
+          },
+          {
+            "id": "interaction_1791307717688_7l0rv1",
+            "timestamp": "2026-10-06T17:28:37.688Z",
+            "points": 2.8900000000000006,
+            "kind": "message",
+            "appliedRules": [],
+            "valence": "positive"
+          }
+        ],
+        "dynamics": {
+          "warmth": 0.9999999837004986,
+          "warmthUpdatedAt": "2026-10-06T17:28:37.688Z",
+          "conflictChilled": false,
+          "trend": "rising",
+          "currentStage": "stranger",
+          "offenseTimestamps": [],
+          "positiveBucketCounts": {
+            "day:20732": 3
+          },
+          "graveBucketKeys": [],
+          "positiveInteractionsSinceScar": 0,
+          "positiveBucketKeysSinceScar": []
+        },
+        "lastPointsEarned": "2026-10-06T17:28:37.688Z"
+      },
+      "firstSeen": "2026-10-06T17:28:37.422Z",
+      "lastSeen": "2026-10-06T17:28:37.688Z",
+      "customData": {}
+    }
+  },
+  "sessionCounter": 0,
+  "limitRecords": []
+}

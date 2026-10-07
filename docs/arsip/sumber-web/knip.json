@@ -1,0 +1,15 @@
+{
+  "$schema": "https://knip.dev/schema.json",
+  "workspaces": {
+    "packages/*": {
+      "entry": ["src/index.js"],
+      "project": ["src/**/*.js"]
+    },
+    "apps/*": {
+      "entry": ["src/main.js", "src/main/index.js", "renderer/src/main.js"],
+      "project": ["src/**/*.js", "renderer/src/**/*.js", "renderer/src/**/*.jsx"]
+    }
+  },
+  "ignore": ["**/*.py", "var/**", "bin/**", "assets/**", "public/**", "web/**"],
+  "ignoreDependencies": ["@unocss/preset-attributify"]
+}

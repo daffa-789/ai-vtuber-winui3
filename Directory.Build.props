@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    Berlaku untuk semua project C# di bawah folder ini (src/, tests/).
+    Project C++ (native/) tidak memakai file ini.
+  -->
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Identitas bersama untuk seluruh assembly Silver Wolf -->
+    <Company>Silver Wolf</Company>
+    <Product>Silver Wolf</Product>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!--
+    Penunjuk ke Cubism SDK for Native. SDK-nya TIDAK ada di repo (berlisensi,
+    tidak boleh di-commit). Set variabel lingkungan CUBISM_SDK_DIR, atau edit
+    build/CubismSdk.props, sebelum membangun native/SilverWolf.Live2D.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)build\CubismSdk.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)build\CubismSdk.props')" />
+
+</Project>

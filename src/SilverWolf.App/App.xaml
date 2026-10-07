@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="SilverWolf.App.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SilverWolf.App"
+    RequestedTheme="Dark">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <!--
+                  TODO(M10): ThemeDictionary.xaml — token warna cyberpunk hasil port dari
+                  style.css (1318 baris). Tema dipaku Dark; aplikasi tidak pernah light mode.
+                -->
+                <!-- <ResourceDictionary Source="Themes/ThemeDictionary.xaml" /> -->
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

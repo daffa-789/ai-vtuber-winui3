@@ -1,0 +1,68 @@
+node_modules/
+dist/
+out/
+# Keluaran electron-vite + installer electron-builder.
+release/
+.vite/
+.turbo/
+# Berkas sementara yang ditulis electron-vite saat membundel konfigurasi.
+electron.vite.config.*
+# Lingkungan Python: interpreter + salinan paket, bukan sumber.
+.venv/
+__pycache__/
+*.pyc
+.env
+# Salinan .env (mis. cadangan saat menguji) berisi API key yang sama.
+.env.*
+!.env.example
+.shots/
+.workbuddy-ai/
+# Log sementara (mis. server Bun yang dijalankan dari skrip uji).
+*.log
+
+# Aset berlisensi Live2D: diunduh ulang dengan `python scripts/unduh_aset.py`,
+# bukan diedarkan lewat repositori ini.
+public/live2dcubismcore.min.js
+public/vad/
+public/ort/
+public/onnx/
+public/piper/
+
+# Model karakter sendiri: berkas sumber + hasil pasang, tetap di mesin ini.
+# SELURUH public/models/ dikecualikan, bukan cuma penyihir: lisensi Live2D
+# melarang modelnya diedarkan sebagai berkas lepas, dan silverwolf (19 MB) akan
+# ikut ter-commit kalau baris ini menyebut satu folder saja.
+public/models/
+
+# Hasil sintesis + berkas temp + jejak ukur. `var/` sengaja di luar web/ dan
+# public/ supaya statis.py tidak pernah bisa menyajikannya lewat HTTP.
+var/
+# Model LLM offline (GGUF): diunduh dengan `python scripts/unduh_model.py`,
+# ukuran besar (>700 MB), tidak untuk di-commit ke Git.
+model/
+*.gguf
+
+# Binary llama.cpp (llama-server + DLL Vulkan) hasil scripts/unduh_llama.py:
+# 92 MB pihak ketiga, bisa dibangkitkan ulang, dan bukan sumber proyek ini.
+bin/
+
+# Memori karakter: FAKTA NYATA TENTANG MASTER (kota, nama toko, kebiasaan) + log
+# percakapan. Repo ini publik -- dulu satu berkas semacam ini ter-commit dan ter-push
+# (e00f67f) dan isinya memuat fakta pribadi. Jangan pernah melepas baris ini, dan
+# jangan pernah memindahkan isinya ke berkas yang ikut ter-commit.
+memori-waifu/
+silver_wolf memory/
+silver_wolf_memory/
+
+# ── aset monorepo TypeScript ────────────────────────────────────────────────
+# Rumah baru untuk model RVC/Piper/Whisper/LLM dan encoder ONNX. Isinya sama
+# dengan aset/suara + model/ di atas, hanya ditata ulang mengikuti struktur
+# monorepo. Semua berkas besar (>100 MB) — tidak pernah masuk git.
+assets/
+# Salinan core Cubism untuk stage-web (lisensi Live2D: jangan diedarkan).
+apps/*/public/models/
+apps/*/public/live2dcubismcore.min.js
+# Aset wasm onnxruntime-web yang disalin ke public/ort/ saat build.
+apps/*/public/ort/
+
+

@@ -1,0 +1,101 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Lapisan yang menyentuh Windows: ApplicationData (config/persistensi),
+      proses anak llama-server.exe, dan playback audio.
+
+      TTS/ONNX Runtime SENGAJA TIDAK didefinisikan di sini — lihat catatan di
+      bawah dan di SilverWolf.Phonemizer.
+    -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>SilverWolf.Services</RootNamespace>
+    <AssemblyName>SilverWolf.Services</AssemblyName>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Playback + EQ (BiQuadFilter) + BufferedWaveProvider -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SilverWolf.Core\SilverWolf.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    ============================================================================
+    MENGAPA ONNX RUNTIME TIDAK DIREFERENSIKAN DI PROJECT INI
+    ============================================================================
+
+    Rencana awal: pakai `Microsoft.ML.OnnxRuntime` di sini untuk Piper TTS.
+    Ternyata itu MUSTAHIL selama Microsoft.WindowsAppSDK dipakai, dan
+    penyebabnya lebih dalam daripada sekadar nama file yang bentrok.
+
+    HASIL PEMERIKSAAN METADATA MSBUILD (bukan dugaan, dibaca dari log -v:diag):
+
+      Paket A: microsoft.ml.onnxruntime 1.22.0  (yang kita mau)
+        - runtimes/win-x64/native/onnxruntime.dll
+              DestinationSubPath = onnxruntime.dll
+              PathInPackage      = runtimes/win-x64/native/onnxruntime.dll
+        - lib -> Microsoft.ML.OnnxRuntime.dll (lewat Microsoft.ML.OnnxRuntime.Managed)
+
+      Paket B: microsoft.windows.ai.machinelearning 2.1.74
+               (ikut tertarik WindowsAppSDK -> WindowsAppSDK.ML)
+        - runtimes/win-x64/native/onnxruntime.dll
+              DestinationSubPath = onnxruntime.dll
+              PathInPackage      = runtimes/win-x64/native/onnxruntime.dll
+        - lib/net8.0-windows10.0.17763.0/Microsoft.ML.OnnxRuntime.dll
+              DestinationSubPath = Microsoft.ML.OnnxRuntime.dll
+              PathInPackage      = lib/net8.0-windows10.0.17763.0/Microsoft.ML.OnnxRuntime.dll
+
+    Jadi tabrakannya ada DUA, dan keduanya SETARA:
+      1. native  : onnxruntime.dll        — DestinationSubPath dan PathInPackage sama
+      2. managed : Microsoft.ML.OnnxRuntime.dll — DestinationSubPath dan nama assembly sama
+
+    Konsekuensi yang membuat pendekatan "ganti nama file" gagal:
+      a. Mengganti TargetPath hanya memperbaiki lapisan DestinationSubPath;
+         PathInPackage tetap sama, sehingga MSIX tetap menolaknya.
+      b. Mengganti keduanya berarti dua jenis ONNX Runtime in-process pada saat
+         yang sama — satu milik kita (1.22.0) dan satu milik Windows AI
+         (MachineLearning framework-mode). Itu bukan konfigurasi yang pernah
+         diuji siapa pun, dan kegagalannya akan berupa crash P/Invoke di runtime,
+         bukan error build yang jelas.
+      c. Dua paket yang sama-sama mengklaim `Microsoft.ML.OnnxRuntime.dll`
+         tidak punya urutan resolusi yang bisa diandalkan: assembly mana yang
+         menang ditentukan urutan restore, bukan keinginan kita. Salah pilih
+         berarti `OrtValue`/`InferenceSession` milik versi lain — corrupt di runtime.
+
+    KEPUTUSAN: Piper TTS DIPISAHKAN DARI PROSES APLIKASI.
+    Binari ONNX Runtime milik kita tidak pernah masuk ke payload MSIX aplikasi,
+    sehingga tidak ada satu pun tabrakan di atas yang bisa terjadi.
+
+    ARSITEKTUR TARGET (dipakai mulai M11)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      SilverWolf.App (WinUI, MSIX, punya WindowsAppSDK/ML)
+        - UI, Live2D, chat, kizuna, playback audio (NAudio)
+        - TIDAK ada referensi ONNX Runtime
+        - bicara ke worker lewat stdin/stdout JSON, sama seperti jalur
+
+      SilverWolf.TtsWorker  (console exe, TANPA WindowsAppSDK)
+        - Microsoft.ML.OnnxRuntime pin 1.22.0 (satu-satunya pemilik nama itu)
+        - Piper ONNX: phonemize -> ids -> sintesis -> WAV
+        - cukup exe biasa yang diluncurkan App; hasilnya di-stream balik
+
+    Kenapa ini juga lebih baik untuk alasan lain:
+      - Sesi ONNX Runtime untuk Piper berjalan di proses sendiri, jadi tidak
+        pernah berebut UI thread maupun perangkat D3D11 milik Cubism.
+      - TTS bisa di-restart tanpa mematikan aplikasi kalau model bermasalah.
+      - Payload MSIX aplikasi tetap ramping.
+
+    TODO(M11): buat project src/SilverWolf.TtsWorker (OutputType Exe,
+    TANPA WindowsAppSDK), pindahkan pemanggilan Piper ke sana, lalu tambahkan
+    proses peluncur + protokol stdin/stdout di SilverWolf.App/Services.
+    Rincian protokol: docs/migrasi/rencana-migrasi.md bagian 8.
+    ============================================================================
+  -->
+
+</Project>

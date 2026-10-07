@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Sengaja NET8.0 polos — TANPA suffix -windows dan bebas WinRT.
+      Tujuannya agar seluruh lapisan domain (parser .env, vault markdown, bond,
+      pemotong kalimat, parser tag emosi) bisa di-unit-test dari mesin apa pun
+      tanpa menarik platform Windows.
+
+      Yang butuh Windows (ApplicationData, WinRT, NAudio, ORT) letaknya di
+      SilverWolf.Services.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>SilverWolf.Core</RootNamespace>
+    <AssemblyName>SilverWolf.Core</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

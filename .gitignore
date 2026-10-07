@@ -1,0 +1,79 @@
+# ---- Output build ----
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ---- Artefak MSIX / publish ----
+AppPackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_pkginfo.txt
+*.appx
+*.appxbundle
+*.appxupload
+*.msix
+*.msixbundle
+*.msixupload
+*.cer
+*.pfx
+
+# ---- Kode pihak ketiga berlisensi: JANGAN PERNAH di-commit ----
+# Cubism SDK for Native (Core + Framework) dan piper-phonemize/source espeak-ng
+native/third_party/
+_cubism_sdk/
+
+# ---- Aset besar & data pribadi: mesin-lokal, tidak ikut repo ----
+#
+# Semuanya dipindahkan dari `AI Vtuber Web/` pada 2026-10-07. Isinya:
+#   model/                  GGUF 4,8 GB
+#   assets/                 1,7 GB — piper, rvc, voices, whisper, model-dasar,
+#                           live2d/silverwolf (19 MB, berlisensi Live2D)
+#   bin/llama/              91 MB binary llama.cpp Vulkan (sudah tertutup [Bb]in/)
+#   silver_wolf_memory/     130 KB — data pribadi: persona, Fakta, Mood, Riwayat
+#
+# Model Live2D TIDAK boleh didistribusikan ulang sebagai berkas lepas
+# (lisensi Live2D), jadi folder ini memang tidak pernah ikut repo.
+#
+# Catatan pola: memakai `assets/*` (bukan `assets/`) supaya sebagian isinya
+# masih bisa di-commit. Git TIDAK bisa mengembalikan berkas di dalam folder
+# yang sudah dikecualikan seluruhnya — jadi pengecualian per-anak-folder hanya
+# bekerja kalau induknya sendiri tidak dikecualikan.
+assets/*
+model/
+Assets/espeak-ng-data/
+*.gguf
+*.onnx
+*.moc3
+*.motion3.json
+*.physics3.json
+silver_wolf_memory/
+
+# ---- Aset kecil yang HARUS ikut repo ----
+#
+# Font: aplikasi lama mengambilnya dari fonts.googleapis.com saat runtime.
+# Untuk aplikasi offline, ketiganya dibundel lokal. Lisensi SIL OFL 1.1
+# mengizinkan pembundelan. Lihat assets/fonts/README.md.
+!assets/fonts/
+# Ikon aplikasi Silver Wolf (bukan logo template WinUI).
+!assets/ikon/
+
+# ---- Output build native ----
+#
+# `dotnet build` tidak bisa membangun .vcxproj (MSB4019), jadi native dibangun
+# lewat `bash native/SilverWolf.Live2D/build-cli.sh`. Keluarannya mendarat di
+# `native/SilverWolf.Live2D/build/` — bukan di `bin/`, sehingga tidak tertutup
+# aturan `[Bb]in/` di atas. PDB/ILK/MAP bisa puluhan MB per build.
+native/**/build/
+*.pdb
+*.ilk
+*.map
+*.obj
+*.exp
+*.simpan
+
+# ---- File yang dihasilkan saat runtime ----
+.env

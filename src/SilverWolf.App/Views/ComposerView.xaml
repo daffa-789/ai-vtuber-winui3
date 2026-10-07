@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="SilverWolf.App.Views.ComposerView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!--
+      Kotak input — port komponen Komposer.
+
+      Tombol kirim diikat ke KirimCommand, yang bisa-dijalankan-nya mengikuti
+      IsSending dan Draf (CompanionViewModel memanggil
+      NotifyCanExecuteChanged() pada keduanya). Toggle suara baru benar-benar
+      bekerja di M11; di sini hanya menyediakan keadaannya.
+
+      Enter untuk mengirim: ditangani di code-behind, BUKAN lewat
+      KeyboardAccelerator. Alasannya TextBox menangani Enter lebih dulu
+      (AcceptsReturn="False"), sehingga accelerator tidak pernah kebagian.
+
+      Penangan dipasang ke DUA kejadian sekaligus, PreviewKeyDown dan KeyDown,
+      dengan penangan yang sama. PreviewKeyDown berjalan lebih dulu dan menandai
+      kejadiannya sudah ditangani, sehingga KeyDown tidak ikut menyala — jadi
+      tidak ada pengiriman ganda. Cadangan ini ada karena perilaku Enter pada
+      TextBox WinUI 3 bergantung versi, dan tidak bisa diuji secara interaktif
+      di lingkungan pengembangan ini (input sintetis tidak sampai ke aplikasi).
+    -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <TextBox
+            x:Name="KotakTeks"
+            Grid.Column="0"
+            Text="{Binding Draf, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+            PlaceholderText="Tulis sesuatu untuk Silver Wolf…"
+            AcceptsReturn="False"
+            MaxHeight="120"
+            PreviewKeyDown="OnKotakPreviewKeyDown"
+            KeyDown="OnKotakPreviewKeyDown" />
+
+        <Button
+            Grid.Column="1"
+            Margin="8,0,0,0"
+            Content="{Binding TeksKirim}"
+            Command="{Binding KirimCommand}" />
+
+        <ToggleButton
+            Grid.Column="2"
+            Margin="8,0,0,0"
+            Content="SUARA"
+            IsChecked="{Binding SuaraAktif, Mode=TwoWay}" />
+    </Grid>
+</UserControl>

@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!--
+    ==========================================================================
+    SilverWolf.Live2D — renderer Live2D native (M8)
+    ==========================================================================
+
+    Kenapa DLL biasa dengan ekspor C, bukan komponen C++/WinRT:
+      - Tidak perlu berkas .idl, pembangkitan .winmd, maupun paket NuGet
+        Microsoft.Windows.CppWinRT. Tiap tambahan itu satu lagi hal yang bisa
+        gagal saat build tanpa pesan yang jelas.
+      - C# mengaksesnya lewat P/Invoke (DllImport). Untuk SwapChainPanel,
+        sisi C# mengambil penunjuk ISwapChainPanelNative dan meneruskannya
+        sebagai IntPtr.
+
+    Sumber Cubism Framework dikompilasi langsung ke dalam DLL ini (polanya
+    sama seperti Samples resmi Live2D). Renderer yang dipakai D3D11.
+
+    PENTING — jangan pakai $(CubismSdkD3D11) dari build/CubismSdk.props untuk
+    include: properti itu menunjuk ke Samples\D3D11 (folder aplikasi demo),
+    sedangkan sumber renderer ada di Framework\src\Rendering\D3D11.
+  -->
+
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{8E4C1A55-6D2B-4F31-9A7E-2C5B8F1D3A61}</ProjectGuid>
+    <RootNamespace>SilverWolfLive2D</RootNamespace>
+    <ProjectName>SilverWolf.Live2D</ProjectName>
+    <WindowsTargetPlatformVersion>10.0.28000.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformMinVersion>10.0.17763.0</WindowsTargetPlatformMinVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <!-- Penunjuk SDK sudah mendeteksi Cubism 4 sekaligus Cubism 5. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\..\build\CubismSdk.props" />
+
+  <PropertyGroup>
+    <CubismFrameworkD3D11>$(CubismSdkDir)\Framework\src\Rendering\D3D11</CubismFrameworkD3D11>
+  </PropertyGroup>
+
+  <!--
+    Runtime library harus konsisten dengan varian lib Cubism Core:
+      Debug   -> /MDd  ->  Live2DCubismCore_MDd.lib
+      Release -> /MD   ->  Live2DCubismCore_MD.lib
+    props menetapkan _MT.lib; ditimpa di sini karena DLL kita memakai CRT dinamis.
+  -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>
+        $(CubismSdkCoreInclude);
+        $(CubismSdkFrameworkSrc);
+        $(CubismSdkFrameworkSrc)\Effect;
+        $(CubismSdkFrameworkSrc)\Id;
+        $(CubismSdkFrameworkSrc)\Math;
+        $(CubismSdkFrameworkSrc)\Model;
+        $(CubismSdkFrameworkSrc)\Motion;
+        $(CubismSdkFrameworkSrc)\Physics;
+        $(CubismSdkFrameworkSrc)\Rendering;
+        $(CubismSdkFrameworkSrc)\Type;
+        $(CubismSdkFrameworkSrc)\Utils;
+        $(CubismFrameworkD3D11);
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_DEBUG;SWL2D_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalDependencies>
+        $(CubismSdkCoreLibDir)\Live2DCubismCore_MDd.lib;
+        d3d11.lib;d3dcompiler.lib;dxgi.lib;windowscodecs.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>
+        $(CubismSdkCoreInclude);
+        $(CubismSdkFrameworkSrc);
+        $(CubismSdkFrameworkSrc)\Effect;
+        $(CubismSdkFrameworkSrc)\Id;
+        $(CubismSdkFrameworkSrc)\Math;
+        $(CubismSdkFrameworkSrc)\Model;
+        $(CubismSdkFrameworkSrc)\Motion;
+        $(CubismSdkFrameworkSrc)\Physics;
+        $(CubismSdkFrameworkSrc)\Rendering;
+        $(CubismSdkFrameworkSrc)\Type;
+        $(CubismSdkFrameworkSrc)\Utils;
+        $(CubismFrameworkD3D11);
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NDEBUG;SWL2D_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>
+        $(CubismSdkCoreLibDir)\Live2DCubismCore_MD.lib;
+        d3d11.lib;d3dcompiler.lib;dxgi.lib;windowscodecs.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <!-- ── Sumber kita ───────────────────────────────────────────────────── -->
+  <ItemGroup>
+    <ClInclude Include="Live2DStage.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Live2DStage.cpp" />
+  </ItemGroup>
+
+  <!--
+    ── Sumber Cubism Framework ─────────────────────────────────────────────
+    Semua .cpp di Framework/src kecuali renderer untuk backend lain
+    (D3D9/Metal/OpenGL/Vulkan). Renderer D3D11 justru WAJIB ikut.
+  -->
+  <ItemGroup>
+    <ClCompile Include="$(CubismSdkFrameworkSrc)\**\*.cpp"
+               Exclude="$(CubismSdkFrameworkSrc)\Rendering\D3D9\**\*.cpp;
+                        $(CubismSdkFrameworkSrc)\Rendering\Metal\**\*.cpp;
+                        $(CubismSdkFrameworkSrc)\Rendering\OpenGL\**\*.cpp;
+                        $(CubismSdkFrameworkSrc)\Rendering\Vulkan\**\*.cpp" />
+  </ItemGroup>
+
+  <!--
+    Shader .fx dikompilasi Cubism SAAT RUNTIME lewat D3DCompile, dengan jalur
+    relatif "FrameworkShaders/CubismEffect.fx" dan
+    "FrameworkShaders/CubismBlendMode.fx". Karena itu berkasnya harus ikut ke
+    folder output; kalau tidak, model tidak akan pernah tergambar.
+  -->
+  <ItemGroup>
+    <None Include="$(CubismFrameworkD3D11)\Shaders\CubismEffect.fx">
+      <DeploymentContent>true</DeploymentContent>
+      <Link>FrameworkShaders\CubismEffect.fx</Link>
+    </None>
+    <None Include="$(CubismFrameworkD3D11)\Shaders\CubismBlendMode.fx">
+      <DeploymentContent>true</DeploymentContent>
+      <Link>FrameworkShaders\CubismBlendMode.fx</Link>
+    </None>
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+
+  <!-- Salin shader ke folder output bersama DLL. -->
+  <Target Name="SalinShaderCubism" AfterTargets="Build">
+    <Copy SourceFiles="$(CubismFrameworkD3D11)\Shaders\CubismEffect.fx"
+          DestinationFiles="$(OutDir)FrameworkShaders\CubismEffect.fx"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(CubismFrameworkD3D11)\Shaders\CubismBlendMode.fx"
+          DestinationFiles="$(OutDir)FrameworkShaders\CubismBlendMode.fx"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
