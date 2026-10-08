@@ -156,6 +156,10 @@
     Salin DLL native ke folder output bila tersedia. Condition Exists() penting:
     berkas ini belum ada sampai pengguna membangun proyek native di Visual
     Studio. Tanpa condition, build akan gagal di mesin yang belum punya DLL.
+
+    Path MSBuild VS standar: native\SilverWolf.Live2D\bin\...
+    Path CLI build (bash build-cli.sh): native\SilverWolf.Live2D\build\...
+    Tanpa fallback, kedua jalur harus dicantumkan.
   -->
   <ItemGroup>
     <Content Include="..\..\native\SilverWolf.Live2D\bin\x64\$(Platform)\$(Configuration)\SilverWolf.Live2D.dll"
@@ -170,6 +174,19 @@
              Link="FrameworkShaders\CubismBlendMode.fx"
              CopyToOutputDirectory="PreserveNewest"
              Condition="Exists('..\..\native\SilverWolf.Live2D\bin\x64\$(Platform)\$(Configuration)\FrameworkShaders\CubismBlendMode.fx')" />
+    <!-- Fallback CLI: build-cli.sh menaruh keluaran di .../build/ (bukan bin/). -->
+    <Content Include="..\..\native\SilverWolf.Live2D\build\x64\$(Configuration)\SilverWolf.Live2D.dll"
+             Link="SilverWolf.Live2D.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\native\SilverWolf.Live2D\build\x64\$(Configuration)\SilverWolf.Live2D.dll')" />
+    <Content Include="..\..\native\SilverWolf.Live2D\build\x64\$(Configuration)\FrameworkShaders\CubismEffect.fx"
+             Link="FrameworkShaders\CubismEffect.fx"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\native\SilverWolf.Live2D\build\x64\$(Configuration)\FrameworkShaders\CubismEffect.fx')" />
+    <Content Include="..\..\native\SilverWolf.Live2D\build\x64\$(Configuration)\FrameworkShaders\CubismBlendMode.fx"
+             Link="FrameworkShaders\CubismBlendMode.fx"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\native\SilverWolf.Live2D\build\x64\$(Configuration)\FrameworkShaders\CubismBlendMode.fx')" />
   </ItemGroup>
 
   <!--
