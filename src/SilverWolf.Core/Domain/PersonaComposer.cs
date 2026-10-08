@@ -82,7 +82,8 @@ public static class PersonaComposer
         Mood? mood,
         bool lokal = true,
         string kizunaContext = "",
-        string midTermPrompt = "")
+        string midTermPrompt = "",
+        string konteksAlat = "")
     {
         var bagian = new List<string> { RingkasPersona(persona, Batas, lokal).Teks };
 
@@ -102,6 +103,13 @@ public static class PersonaComposer
         if (!string.IsNullOrEmpty(midTermPrompt))
         {
             bagian.Add($"## Konteks Sesi Obrolan\n{midTermPrompt}");
+        }
+
+        // Hasil alat (jam & tanggal mesin) diletakkan tepat sebelum fakta supaya
+        // "hari ini" dan "yang dia ingat tentang Master" terbaca berurutan.
+        if (!string.IsNullOrEmpty(konteksAlat))
+        {
+            bagian.Add(konteksAlat);
         }
 
         if (fakta is { Count: > 0 })

@@ -24,6 +24,7 @@ public sealed class AgentService
     private readonly CharacterVault? _vault;
     private readonly KizunaEngine? _kizuna;
     private readonly TieredMemoryEngine? _memoryEngine;
+    private MasterProfile? _profil;
 
     public AgentService(
         ILlmProvider provider,
@@ -31,6 +32,7 @@ public sealed class AgentService
         CharacterVault? vault = null,
         KizunaEngine? kizuna = null,
         TieredMemoryEngine? memoryEngine = null,
+        MasterProfile? profil = null,
         bool localPrompt = true,
         Action<Exception>? onError = null)
     {
@@ -39,8 +41,19 @@ public sealed class AgentService
         _vault = vault;
         _kizuna = kizuna;
         _memoryEngine = memoryEngine;
+        _profil = profil;
         LocalPrompt = provider.Id == "ollama" ? false : localPrompt;
         OnError = onError;
+    }
+
+    /// <summary>
+    /// Profil Master (tanggal lahir, sebutan). Diset dari <c>Profil.md</c> saat
+    /// runtime menyala; bisa juga diisi langsung oleh uji.
+    /// </summary>
+    public MasterProfile? Profil
+    {
+        get => _profil;
+        set => _profil = value;
     }
 
     /// <summary>
@@ -115,6 +128,28 @@ public sealed class AgentService
         return new TieredMemoryEngine.IsiMemori(fakta, mood, string.Empty, []);
     }
 
+    /// <summary>
+    /// Baca <c>Profil.md</c> dari vault. Gagal baca tidak menggagalkan giliran —
+    /// cukup berarti "belum ada tanggal lahir yang tercatat".
+    /// </summary>
+    private async Task<MasterProfile?> BacaProfilAsync(CancellationToken ct)
+    {
+        if (_vault is null || !_vault.Available())
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _vault.BacaProfilAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            Laporkan(error);
+            return null;
+        }
+    }
+
     /// <summary>Port <c>chat(riwayat, opts, signal)</c>.</summary>
     public async IAsyncEnumerable<StreamChunk> ChatAsync(
         IReadOnlyList<ChatMessage> riwayat,
@@ -122,6 +157,15 @@ public sealed class AgentService
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var mem = await MemoryAsync(ct).ConfigureAwait(false);
+
+        if (_profil is null)
+        {
+            _profil = await BacaProfilAsync(ct).ConfigureAwait(false);
+        }
+
+        var konteksAlat = new DaftarAlat()
+            .Tambah(new AlatWaktu(_profil))
+            .JalankanOtomatis();
 
         var pesan = new List<ChatMessage>
         {
@@ -131,7 +175,8 @@ public sealed class AgentService
                 mem.Mood,
                 LocalPrompt,
                 mem.KizunaContext,
-                mem.MidTermPrompt)),
+                mem.MidTermPrompt,
+                konteksAlat)),
         };
 
         pesan.AddRange(riwayat.Where(m => m.Role != "system"));

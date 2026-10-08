@@ -176,6 +176,30 @@ public class DomainTests
         Assert.Contains("## Konteks Sesi Obrolan", sistem, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void GabungSystem_MenyisipkanKonteksAlatTepatSebelumFakta()
+    {
+        var sistem = PersonaComposer.GabungSystem(
+            PersonaContoh, ["Suka kopi hitam"], null, lokal: true,
+            konteksAlat: "## Jam & tanggal mesin (alat: waktu)\n- Hari ini: Jumat, 9 Oktober 2026");
+
+        Assert.Contains("## Jam & tanggal mesin", sistem, StringComparison.Ordinal);
+        Assert.Contains("Jumat, 9 Oktober 2026", sistem, StringComparison.Ordinal);
+
+        // Alat harus terbaca berurutan dengan fakta tentang Master.
+        Assert.True(
+            sistem.IndexOf("## Jam & tanggal mesin", StringComparison.Ordinal)
+            < sistem.IndexOf("- Suka kopi hitam", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GabungSystem_TanpaAlatTidakMenambahApaPun()
+    {
+        var sistem = PersonaComposer.GabungSystem(PersonaContoh, [], null, lokal: true);
+
+        Assert.DoesNotContain("alat:", sistem, StringComparison.Ordinal);
+    }
+
     // ── ChatHistory ─────────────────────────────────────────────────────────
 
     [Fact]

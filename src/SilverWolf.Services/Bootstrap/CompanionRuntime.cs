@@ -131,12 +131,25 @@ public sealed class CompanionRuntime : IAsyncDisposable
             }, ct);
         }
 
+        // Profil Master dibaca sekali saat menyala supaya alat waktu bisa langsung
+        // menghitung ulang tahun & umur sejak giliran pertama.
+        MasterProfile? profil = null;
+        try
+        {
+            profil = await vault.BacaProfilAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            log?.Invoke($"! profil master belum terbaca: {error.Message}");
+        }
+
         var agent = new AgentService(
             pilihan.Provider,
             persona,
             vault,
             kizuna,
             memory,
+            profil,
             localPrompt: konfig.LlmProvider != "ollama",
             onError: onError);
 

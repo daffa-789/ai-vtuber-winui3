@@ -194,6 +194,25 @@ public sealed class CharacterVault
             ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Port baru: baca <c>Profil.md</c> — fakta terstruktur tentang Master yang
+    /// butuh hitungan (tanggal lahir untuk ulang tahun &amp; umur).
+    /// Null bila berkasnya tidak ada atau tidak memuat satu pun kunci yang dikenal.
+    /// </summary>
+    public async Task<MasterProfile?> BacaProfilAsync(CancellationToken ct = default) =>
+        MasterProfile.Parse(await BacaAsync(MasterProfile.Berkas, ct).ConfigureAwait(false));
+
+    /// <summary>Tulis <c>Profil.md</c> memakai kerangka front-matter yang sama.</summary>
+    public async Task SimpanProfilAsync(MasterProfile profil, CancellationToken ct = default) =>
+        await TulisAsync(
+            MasterProfile.Berkas,
+            Kerangka(
+                "profil-master",
+                "Profil Master yang diingat Silver Wolf",
+                profil.KeTeks(),
+                ["Fakta", "Mood", "Riwayat"]),
+            ct).ConfigureAwait(false);
+
     /// <summary>Port <c>catatHari(baris)</c>: tambahkan satu baris ke Riwayat/hari-ini.md.</summary>
     public async Task CatatHariAsync(string baris, CancellationToken ct = default)
     {

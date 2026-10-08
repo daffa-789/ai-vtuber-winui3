@@ -873,6 +873,51 @@ versi.
 
 ---
 
+### 7.23 Model tidak tahu tanggal & jam — alat `waktu` (2026-10-09)
+
+**Gejala.** Ditanya "hari ini tanggal berapa" atau "jam berapa", Silver Wolf
+menjawab dari ingatan latihannya dan meleset berbulan-bulan sampai bertahun-
+tahun. Ia juga tidak tahu kapan ulang tahun Master.
+
+**Sebab.** Tidak ada satu pun tempat di prompt yang memberi model angka waktu
+nyata. Model GGUF kecil juga tidak andal menghitung selisih tanggal, jadi
+"tinggal berapa hari lagi" hampir pasti salah kalau diserahkan ke model.
+
+**Keputusan — alat otomatis, bukan function calling.** `llama-server` hanya
+meneruskan apa yang dikeluarkan template obrolan; model yang dipakai tidak
+konsisten menghasilkan JSON `tool_calls`. Karena itu alatnya **tidak menunggu
+diminta model**: `IAlat.Otomatis = true` berarti dijalankan setiap giliran dan
+hasilnya disuntikkan ke prompt sistem. Jawabannya tetap benar walau model tidak
+pernah memanggil alat sama sekali.
+
+Berkasnya:
+
+| Berkas | Isi |
+| --- | --- |
+| `src/SilverWolf.Core/Domain/Tool.cs` | `IAlat` + `DaftarAlat` (registri). Alat yang melempar **dilewati**, tidak menggagalkan giliran. |
+| `src/SilverWolf.Core/Domain/TimeTool.cs` | `AlatWaktu` — tanggal, hari, jam, bagian hari, hitung mundur ulang tahun. |
+| `src/SilverWolf.Core/Domain/MasterProfile.cs` | Tanggal lahir terstruktur. Menghitung umur & sisa hari. |
+| `silver_wolf_memory/Profil.md` | Sumber data tanggal lahir. Format **wajib ISO `yyyy-MM-dd`**. |
+
+Hitungan tanggal dikerjakan C#, bukan model: `Umur`, `UlangTahunBerikutnya`,
+`HariMenujuUlangTahun`, `UmurBerikutnya`. Hari 29 Februari digeser ke 28 di tahun
+biasa supaya `DateOnly` tidak melempar.
+
+**Nama hari dan bulan ditulis sendiri** di `TimeTool.cs`, tidak lewat
+`CultureInfo("id-ID")`: aplikasi bisa dibangun dengan `InvariantGlobalization`,
+dan saat itu nama bulan berubah jadi bahasa Inggris tanpa peringatan.
+
+**Jangan ditulis sebagai tebakan.** Keluaran alat menyertakan kalimat
+"jangan menebak tanggal atau jam sendiri" — tanpa itu model cenderung
+mengabaikan bloknya dan mengarang tanggal.
+
+**Data Master saat ini:** ulang tahun **16 Oktober**, lahir **2005-10-16**.
+Tersimpan di `silver_wolf_memory/Profil.md` **dan** sebagai baris fakta di
+`Fakta.md`. Folder `silver_wolf_memory/` di-gitignore, jadi tanggal lahir tidak
+ikut repo publik.
+
+---
+
 ## 8. Cacat terbuka & sisa pekerjaan
 
 ### 8.1 🔴 Proses mati senyap — INTERMITEN, belum tertutup
@@ -1362,9 +1407,20 @@ Berkasnya di sebelah exe. Penanda penting:
 
 ## 12. Konvensi kode
 
+- **Nama berkas selalu Inggris** (`CharacterVault.cs`, `TimeTool.cs`,
+  `MasterProfile.cs`) walau isinya ber-identifier Indonesia. Pola ini sudah
+  berlaku di seluruh `src/` dan harus dijaga.
 - **Identifier C# Inggris**, tetapi **nilai string yang dilihat pengguna tetap
   Indonesia** (`"siap"`, `"memuat"`, `"tidak-jalan"`, `"warm"`, `"stranger"`).
   Nilai itu ikut menentukan perilaku prompt LLM — jangan diterjemahkan.
+
+  ⚠️ **Kenyataan di lapisan domain/services: mayoritas identifier memang
+  Indonesia** (`BacaFaktaAsync`, `GabungSystem`, `MenandakanSedangMemuat`,
+  `PersistAsync`) karena diterjemahkan langsung dari `apps/server-node/*.js`.
+  Kode **baru di lapisan itu ikut gaya Indonesianya** — mencampur satu berkas
+  dengan dua bahasa lebih merugikan daripada menyimpang dari aturan di atas.
+  Berkas UI (`SilverWolf.App`) justru lebih konsisten Inggris; ikuti gaya
+  berkas yang sedang disunting.
 - **`Live2DStage.cpp` telanjur memakai identifier Indonesia** (`Panggung`,
   `Catat`, `Muat`, `Gambar`, `perangkat`, `swapChain`, `MainkanGerakanBerulang`).
   **Ikuti gaya yang sudah ada** di berkas itu; jangan campur dengan Inggris di
@@ -1497,6 +1553,7 @@ menjalankan `llama-server`: `StatusText` akan menjadi `"memuat"` lalu
 | **2026-10-08** | **Diagnosis "tidak ada balasan & tidak ada suara".** §8.1 dinaikkan ke 🔴 dan ditambah reproduksi **2 dari 2** di dua titik berbeda + uji kontrol yang membuktikan `llama-server` sendirian sehat (prompt 2003 token selesai normal) — jadi penyebabnya bukan model/flag/endpoint, melainkan hadirnya renderer Live2D. §8.1 langkah berikutnya diisi daftar tuas `.env` konkret. §8.5 ditutup (phonemizer tidak lagi menjadi blocker). §8.6 **baru**: 503 "Loading model" tidak dikenali sehingga UI menampilkan OFFLINE. §2 M11 diperbarui: rantai suara **terbukti berjalan** di `tools/tts/`, sisa pekerjaan adalah integrasi. Header §0 diberi peringatan cacat aktif. |
 | **2026-10-08 (lanjutan)** | **Profil suara dikunci.** `VTUBER_RVC_TRANSPOSE` `9` → `-3` di `.env` setelah pengukuran ulang: Piper Indonesia bersuara tinggi (264,8 Hz), sehingga +9 menghasilkan 442,7 Hz; -3 menghasilkan 218,8 Hz, paling dekat dengan 223,8 Hz yang dicatat pada 29 Sep. Skrip `tools/tts/` kini membaca seluruh parameter dari `.env` sebagai sumber tunggal. Hasil acuan: `tools/tts/contoh/04-transpose-3.wav`. Ditambah `tools/tts/README.md` dan `docs/README.md` (indeks). |
 | **2026-10-08 (lanjutan 3)** | §0 diperkaya agar sesi AI berikutnya tidak perlu menemukan ulang hal yang mahal: blok **PEKERJAAN SUARA** (lokasi kedua lingkungan Python, profil terkunci, tiga jebakan wajib), penunjuk `docs/README.md`, dan peringatan agar `silver_wolf_memory/` tidak disentuh maupun ditaut. |
+| **2026-10-09** | **Alat waktu — Silver Wolf kini tahu tanggal & jam, dan ingat ulang tahun Master (16 Oktober, lahir 2005-10-16).** §7.23 baru: alat **otomatis** (`IAlat.Otomatis`), bukan function calling, karena model tidak andal mengeluarkan `tool_calls`. Berkas baru `Core/Domain/Tool.cs`, `TimeTool.cs`, `MasterProfile.cs`; `PersonaComposer.GabungSystem` dapat parameter `konteksAlat`; `AgentService` & `CompanionRuntime` memuat `Profil.md`. Tanggal lahir tersimpan di `silver_wolf_memory/Profil.md` (folder di-gitignore) + satu baris di `Fakta.md`. §12 konvensi dikoreksi: nama berkas Inggris, identifier domain memang Indonesia dan kode baru di lapisan itu ikut gaya tersebut. |
 
 ---
 
