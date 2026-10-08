@@ -20,7 +20,24 @@ namespace SilverWolf.Services.Llama;
 /// </summary>
 public sealed class LlamaServerProcess
 {
-    private const int MaksPercobaanSehat = 120;
+    /// <summary>
+    /// Batas menunggu llama-server siap, dalam milidetik.
+    ///
+    /// <b>Kenapa 120 detik, bukan 30.</b> Nilai lama adalah 120 percobaan x
+    /// 250 ms = <b>30 detik</b>, dan itu selalu kalah lomba dengan kenyataan:
+    /// GGUF Gemma 4B (5,12 GB) pada mesin ini butuh <b>38-45 detik</b> dari
+    /// `loading model` sampai `listening on http://127.0.0.1:8788` — terukur
+    /// di `tools/bukti/`. Akibatnya loop kehabisan percobaan tepat saat model
+    /// hampir siap, `StartAsync` mengembalikan "waktu tunggu llama-server
+    /// habis", dan pemanggilnya menjalankan `Stop()` sehingga
+    /// <b>llama-server yang sebenarnya sehat dimatikan dari bawah</b>.
+    /// Gejalanya persis seperti crash: aplikasi hidup, jendela tampil, lalu
+    /// hilang beberapa detik kemudian.
+    ///
+    /// Perlambatan normal lain (pemuatan .gguf pertama kali sesudah cold boot,
+    /// antivirus memindai 5 GB, disk sibuk) juga ikut tertampung.
+    /// </summary>
+    private const int MaksPercobaanSehat = 480;
     private const int JedaSehatMs = 250;
     private const int BatasSehatMs = 1000;
     private const int JedaPaksaMs = 1500;
@@ -161,7 +178,22 @@ public sealed class LlamaServerProcess
                     return new HasilMula(true, "siap");
                 }
 
-                alasan = $"health HTTP {(int)res.StatusCode}";
+                // 503 = server hidup dan sedang memuat model ke VRAM. Itu
+                // kemajuan, bukan kegagalan, jadi jangan dicatat sebagai
+                // "alasan" — kalau loop benar-benar habis, yang dilaporkan
+                // harus sebab terakhir yang benar-benar menghalangi.
+                // Dipakai bersama OpenAiCompatibleProvider lewat HealthProbe
+                // supaya kedua sisi mengenali bentuk badan yang sama
+                // (docs/PROYEK.md §8.6).
+                var badan = await res.Content.ReadAsStringAsync(batas.Token).ConfigureAwait(false);
+                if (Core.Inference.HealthProbe.MenandakanSedangMemuat((int)res.StatusCode, badan))
+                {
+                    alasan = "model masih dimuat ke VRAM";
+                }
+                else
+                {
+                    alasan = $"health HTTP {(int)res.StatusCode}";
+                }
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {

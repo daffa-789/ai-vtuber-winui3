@@ -19,37 +19,53 @@ public sealed partial class StageView : UserControl
     /// kerja Cubism ternormalisasi, jadi 1.0 berarti tinggi tampil 2.0 satuan
     /// pada rentang pandang yang juga 2.0 satuan.
     ///
-    /// <b>Nilai ini pernah 1.85 dan itu terlalu besar.</b> Warisan aplikasi web
-    /// (<c>VITE_AVATAR_ZOOM=1.85</c>) tidak bisa dipindahkan apa adanya: di web
-    /// zoom itu mengalikan skala "pas panel" pada PIXI dengan jangkar 0.92,
-    /// sedangkan di sini <c>SetHeight(2.0 * perbesaran)</c> langsung membuat
-    /// model setinggi itu. Akibatnya pada 1.85 hanya kepala dan bahu yang
-    /// terlihat — kepala tampak raksasa dan badan terpotong.
+    /// <b>Sejarah nilai ini, jangan diulang:</b> pernah 1.85 (warisan web) —
+    /// hanya kepala+bahu. 0.88 — kepala & sayap terpotong. 0.48 — kekecilan.
     ///
-    /// 0.88 dipilih dari pengukuran, bukan tebakan: pada nilai ini seluruh
-    /// karakter (termasuk ujung sayap) masuk ke panel, sementara tingginya
-    /// masih memenuhi sekitar dua pertiga panel.
+    /// <b>0.70 dipakai sejak 2026-10-09 sore.</b> Alasannya aritmetika, bukan
+    /// selera: hasil ukur luar (PIL pada tangkapan Master) menunjukkan karakter
+    /// mengisi <b>524 px dari panel 672 px</b> pada 0.78. Artinya hanya tersisa
+    /// **88 px render untuk dua margin** — mustahil memberi margin ~80 px per
+    /// sisi sambil tetap menggeser karakter ke kiri seperti yang diminta Master.
+    /// Salah satu sisi pasti terpotong.
+    ///
+    /// Dengan 0.70 lebar turun ke ~496 px render, menyisakan ~145 px untuk dua
+    /// margin, sehingga permintaan "geser ke kiri, semua badan + sayap kelihatan"
+    /// bisa dipenuhi sekaligus.
+    ///
+    /// Skala render (641 px) ke panel nyata (672 px) = 1.048.
     /// </summary>
-    private const float Perbesaran = 0.88f;
+    private const float Perbesaran = 0.70f;
 
     /// <summary>
     /// Geser horizontal dalam satuan ternormalisasi (1.0 = setengah lebar
     /// panel). Negatif = ke kiri.
     ///
-    /// Kenapa tidak 0: seni model ini tidak simetris — sayap mekaniknya jauh
-    /// lebih panjang ke kanan daripada ke kiri. Dengan geser 0, ujung sayap
-    /// kanan terpotong tepi panel (terukur 90 piksel menyentuh tepi pada
-    /// perbesaran 1.0). Menggeser sedikit ke kiri memindahkan potongan itu ke
-    /// sisi yang memang lega.
+    /// Master meminta karakter digeser ~80 px ke kiri dari posisi terakhir
+    /// (yang terukur margin kiri 147 px / kanan 1 px — sayap kanan terpotong).
+    ///
+    /// Konversi yang dipakai:
+    ///   1 satuan geser = 425 px render = 446 px panel
+    ///   80 px panel   = 80 / 446 = 0.179 satuan
+    ///   posisi lama -0.14 (sebelum 0.78) -> nilai baru di sekitar -0.32
+    ///
+    /// Karena perbesarannya sekaligus diturunkan ke 0.70 (lihat di atas), geser
+    /// yang setara "80 px" menjadi lebih kecil: model yang lebih kecil bergerak
+    /// px yang sama dengan satuan yang lebih besar. -0.20 menghasilkan
+    /// pergeseran yang sama secara visual tanpa mendorong sisi kiri keluar.
     /// </summary>
-    private const float GeserX = -0.10f;
+    private const float GeserX = -0.20f;
 
     /// <summary>
     /// Jangkar vertikal dalam satuan ternormalisasi (1.0 = tepi atas panel).
-    /// Positif = naik. 0.10 mengangkat model sedikit supaya tidak menempel
-    /// dasar panel.
+    /// Positif = naik.
+    ///
+    /// Master meminta badan "dinaikkan ke atas". Pada 0.48 pusatnya di 42%
+    /// tinggi bingkai tetapi menyisakan 352 px kosong di bawah. 0.30 dipakai:
+    /// mengangkat model sehingga kepalanya tidak terlalu jauh dari atas
+    /// sementara kaki mendekati dasar panel, mengisi ruang lebih merata.
     /// </summary>
-    private const float JangkarY = 0.10f;
+    private const float JangkarY = 0.30f;
 
     /// <summary>Indeks gerakan idle di grup <c>isyarat</c>: 2 = "siklus".</summary>
     private const int IdleGerakan = 2;
@@ -62,6 +78,8 @@ public sealed partial class StageView : UserControl
     private int _panggung = -1;
     private string _ekspresiTerakhir = string.Empty;
     private int _percobaan;
+    private bool _aktif = true;
+    private bool _berhenti;
 
     public StageView()
     {
@@ -112,6 +130,7 @@ public sealed partial class StageView : UserControl
     /// </summary>
     private void CobaBuatPanggung()
     {
+        if (_berhenti) return;
         _percobaan++;
 
         var penunjuk = Live2DNative.AmbilPenunjukPanel(PanggungPanel);
@@ -151,8 +170,12 @@ public sealed partial class StageView : UserControl
         var antrean = DispatcherQueue.GetForCurrentThread();
         _timerRender = antrean.CreateTimer();
         _timerRender.Interval = TimeSpan.FromMilliseconds(33);
-        _timerRender.Tick += (_, _) => Live2DNative.Gambar(_panggung);
-        _timerRender.Start();
+        _timerRender.Tick += (_, _) =>
+        {
+            if (!_berhenti && _aktif && _panggung > 0) Live2DNative.Gambar(_panggung);
+        };
+        TerapkanEkspresi();
+        if (_aktif) _timerRender.Start();
     }
 
     private void JadwalkanUlang()
@@ -169,7 +192,7 @@ public sealed partial class StageView : UserControl
         timer.Tick += (_, _) =>
         {
             timer.Stop();
-            if (_panggung < 0)
+            if (!_berhenti && _panggung < 0)
             {
                 CobaBuatPanggung();
             }
@@ -179,13 +202,90 @@ public sealed partial class StageView : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        _timerRender?.Stop();
-        _timerRender = null;
+        Berhenti();
 
         if (_vm is not null)
         {
             _vm.PropertyChanged -= OnVmBerubah;
             _vm = null;
+        }
+    }
+
+    /// <summary>
+    /// Hentikan timer/retry dan invalidasikan ID panggung sebelum shutdown native.
+    /// Tidak membebaskan objek native sendiri. Urutan ini adalah mitigasi teardown;
+    /// penyebab dialog abort() dan keberhasilan penutupan masih perlu uji runtime.
+    /// </summary>
+    public void Berhenti()
+    {
+        try
+        {
+            _berhenti = true;
+            _timerRender?.Stop();
+            _timerRender = null;
+
+            if (_panggung >= 0)
+            {
+                _panggung = -1;
+            }
+
+            _ekspresiTerakhir = string.Empty;
+        }
+        catch (Exception galat)
+        {
+            CrashLog.Tulis("StageView.Berhenti", galat);
+        }
+    }
+
+    /// <summary>
+    /// Hentikan atau lanjutkan render sesuai fokus jendela.
+    ///
+    /// <para>
+    /// <b>Kenapa ini penting di mesin ini:</b> GPU-nya Intel Iris Xe terintegrasi,
+    /// jadi VRAM berbagi RAM dengan model bahasa 5,12 GB. Render 30 fps yang
+    /// tetap berjalan saat jendela di belakang membakar CPU/GPU tanpa ada yang
+    /// melihatnya — sekaligus menambah tekanan memori yang justru menjadi akar
+    /// kematian Mode B/C (lihat docs/PROYEK.md §8.1). Menjeda saat tidak fokus
+    /// adalah penghematan terbesar yang paling murah.
+    /// </para>
+    ///
+    /// <para>
+    /// Aman dipanggil kapan saja: kalau panggung belum jadi, timer belum ada dan
+    /// panggilan ini tidak melakukan apa-apa (pembuatan panggung tetap berjalan
+    /// lewat jalur <c>OnLoaded</c>).
+    /// </para>
+    /// </summary>
+    public void UbahFokus(bool aktif)
+    {
+        _aktif = aktif;
+        if (_berhenti) return;
+        try
+        {
+            if (_timerRender is null || _panggung < 0)
+            {
+                return;
+            }
+
+            if (aktif)
+            {
+                if (!_timerRender.IsRunning)
+                {
+                    _timerRender.Start();
+                }
+            }
+            else
+            {
+                if (_timerRender.IsRunning)
+                {
+                    _timerRender.Stop();
+                }
+            }
+        }
+        catch (Exception galat)
+        {
+            // Timer adalah async void di permukaan WinUI; exception di sini
+            // tidak boleh menjatuhkan proses (pelajaran §7.19).
+            CrashLog.Tulis("StageView.UbahFokus", galat);
         }
     }
 
@@ -201,7 +301,18 @@ public sealed partial class StageView : UserControl
         if (_vm is not null)
         {
             _vm.PropertyChanged += OnVmBerubah;
+            TerapkanEkspresi();
         }
+    }
+
+    private void TerapkanEkspresi()
+    {
+        if (_berhenti || _panggung <= 0 || _vm is null) return;
+        var ekspresi = _vm.Expression;
+        if (string.IsNullOrWhiteSpace(ekspresi) || ekspresi == _ekspresiTerakhir) return;
+        var hasil = Live2DNative.AturEkspresi(_panggung, ekspresi);
+        if (hasil == 0) _ekspresiTerakhir = ekspresi;
+        CrashLog.Tahap($"live2d: ekspresi {ekspresi} -> {hasil}");
     }
 
     private void OnVmBerubah(object? sender, PropertyChangedEventArgs e)
@@ -213,14 +324,8 @@ public sealed partial class StageView : UserControl
 
         if (e.PropertyName == nameof(CompanionViewModel.Expression))
         {
-            var ekspresi = _vm.Expression;
-            if (string.IsNullOrWhiteSpace(ekspresi) || ekspresi == _ekspresiTerakhir)
-            {
-                return;
-            }
-
-            _ekspresiTerakhir = ekspresi;
-            Live2DNative.AturEkspresi(_panggung, ekspresi);
+            // Wajah diaktifkan kembali; label teks ekspresi tetap dihapus.
+            TerapkanEkspresi();
         }
         else if (e.PropertyName == nameof(CompanionViewModel.MirrorTrack))
         {
@@ -262,6 +367,25 @@ public sealed partial class StageView : UserControl
     /// Ikut kursor — port <c>aktifkanIkutiKursor()</c>. Posisi kursor
     /// dinormalisasi terhadap titik wajah lalu dijepit ke rentang -1..1,
     /// persis seperti aplikasi web.
+    ///
+    /// <para>
+    /// <b>Kenapa Y dibalik tandanya.</b> Dua sistem koordinat di sini berlawanan
+    /// arah sumbu Y:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description><b>Layar (WinUI):</b> Y bertambah ke BAWAH. Kursor di
+    /// atas kepala menghasilkan <c>titik.Y - wajahY</c> yang <b>negatif</b>.</description></item>
+    /// <item><description><b>Cubism:</b> <c>ParamAngleY</c> positif = kepala
+    /// menoleh ke ATAS. Framework mendaftarkannya lewat
+    /// <c>LookParameterData(ParamAngleY, 0.0f, 30.0f)</c> di
+    /// <c>Live2DStage.cpp</c> — basis 0, puncak di +30 untuk masukan positif.</description></item>
+    /// </list>
+    /// <para>
+    /// Tanpa pembalikan, kursor di atas kepala memberi Y negatif sehingga kepala
+    /// justru menunduk, dan sebaliknya. Itulah gejala "arahnya kebalik" yang
+    /// dilaporkan Master. Jadi: <c>y = -(titik.Y - wajahY) / rentangY</c>.
+    /// Sumbu X tidak dibalik — kiri/kanan kedua sistem sama arahnya.
+    /// </para>
     /// </summary>
     private void OnPanggungPointerBergerak(object sender, PointerRoutedEventArgs e)
     {
@@ -281,7 +405,10 @@ public sealed partial class StageView : UserControl
         var rentangY = Math.Max(160.0, wajahY * 0.85);
 
         var x = Jepit((titik.X - wajahX) / rentangX);
-        var y = Jepit((titik.Y - wajahY) / rentangY);
+
+        // Dibagi MINUS: layar Y ke bawah, Cubism ParamAngleY ke atas.
+        // Lihat penjelasan di doc comment — ini yang membetulkan arah pandang.
+        var y = Jepit(-(titik.Y - wajahY) / rentangY);
 
         Live2DNative.AturPandang(_panggung, (float)x, (float)y);
     }
@@ -297,8 +424,16 @@ public sealed partial class StageView : UserControl
     private static double Jepit(double nilai) => Math.Clamp(nilai, -1.0, 1.0);
 
     /// <summary>
-    /// Mirror disimpan oleh <c>CompanionViewModel.MirrorTrack</c> (ke
-    /// <c>LocalApplicationData\SilverWolf\</c>). Tombol ini hanya membaliknya.
+    /// Membalik <c>CompanionViewModel.MirrorTrack</c> (disimpan ke
+    /// <c>LocalApplicationData\SilverWolf\</c>).
+    ///
+    /// <para>
+    /// <b>Sudah tidak dipanggil siapa pun.</b> Tombol MIRROR di
+    /// <c>StageView.xaml</c> dibuang atas permintaan Master (9 Okt 2026), jadi
+    /// penangan ini tinggal warisan. Sengaja tidak dihapus: logikanya masih
+    /// benar, dan mengembalikan tombolnya cukup menambah satu <c>Button</c>
+    /// dengan <c>Click="OnMirrorDiklik"</c> — tidak perlu menulis ulang C#.
+    /// </para>
     /// </summary>
     private void OnMirrorDiklik(object sender, RoutedEventArgs e)
     {

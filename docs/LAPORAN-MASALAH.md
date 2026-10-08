@@ -22,11 +22,12 @@ Dokumen yang sering dirujuk dari sini:
 
 | # | Masalah | Tingkat | Dampak utama |
 |---|---|---|---|
-| 1.1 | Proses mati senyap (intermiten; **direproduksi 2/2 pada 8 Okt**) | 🔴 Tinggi | Fitur inti (chat dengan LLM lokal) tidak andal |
+| 1.1 | Proses mati senyap — **3 mode** (shader / memori / Vulkan mulai inferensi); exit code 0 = keluar bersih | 🔴 Tinggi | Fitur inti (chat dengan LLM lokal) tidak andal |
+| 1.6 | ~~"Chat tidak menjawab" — batas tunggu llama cuma 30 dtk~~ | ✅ | **Diperbaiki 9 Okt** — model butuh 38–45 dtk, timeout membunuh llama yang sehat |
 | 1.2 | LipSync belum ada | 🟠 Sedang | Mulut tidak bergerak saat suara berbunyi |
 | 1.3 | Instrumentasi penyidikan masih terpasang | 🟠 Sedang | Log membengkak; perilaku bisa ditimpa variabel lingkungan |
 | 1.4 | ~~Data golden `phoneme_ids` belum ada~~ | ✅ | **Ditutup 8 Okt** — `piper-tts` membawa phonemizer sendiri |
-| 1.5 | 503 "Loading model" tidak dikenali | 🟠 Sedang | UI menampilkan **OFFLINE** padahal model sedang dimuat |
+| 1.5 | ~~503 "Loading model" tidak dikenali~~ | ✅ | **Diperbaiki 9 Okt** — `HealthProbe` di Core + 6 uji baru (total 114) |
 | 2.1 | M10 tema/blur/font | 🟠 Sedang | Tampilan belum setara aplikasi lama |
 | 2.2 | M11 TTS | 🟡 Sedang | **Rantai sudah terbukti jalan** (`tools/tts/`); sisa: integrasi ke aplikasi |
 | 2.3 | M12 tray/hotkey/close-to-tray | 🟡 Rendah | Fitur kenyamanan belum ada |
@@ -109,6 +110,29 @@ memakai angka apa pun.
 >
 > Bukti yang tersimpan: `tools/bukti/kematian-2026-10-07.log`.
 
+> ### ⚠️ Pembaruan 2026-10-09 — klasifikasi ulang, **Mode C** ditemukan
+>
+> Sembilan log di `tools/bukti/jalan-1..9.log` dihitung ulang memakai penanda
+> `PROSES KELUAR` (yang baru terpasang). Hasilnya **membatalkan angka
+> "selamat=4 mati=5"** di `ringkasan-uji.txt`: lima "kematian" itu semuanya
+> **jendela ditutup** (`shutdown: selesai` → `PROSES KELUAR` = jalur normal
+> `MainWindow.OnClosed`).
+>
+> | Jalan | Akhir log | Arti |
+> |---|---|---|
+> | 1,2,3,4,5,8,9 | `shutdown: selesai` → `PROSES KELUAR` | jendela ditutup, bukan crash |
+> | 6 | berhenti di `listening on :8788` | mati di ambang inferensi (hidup 25 dtk) |
+> | 7 | berhenti di `launch_slot_: processing task` | **mati saat token pertama** (hidup 56 dtk) |
+>
+> **Jalan 7 adalah reproduksi persis keluhan Master** — pesan dikirim
+> (`composer: Enter`) lalu log putus di milidetik yang sama saat slot inferensi
+> mulai memproses, tanpa balasan dan tanpa `PROSES KELUAR`.
+>
+> Jadi ada **tiga** pemicu, bukan dua: **A** kompilasi shader, **B** memori
+> habis, **C** saat Vulkan mulai inferensi. Ketiganya exit 0 → dihentikan dari
+> luar CLR. Kesimpulan lama "bukan rebutan GPU" hanya berlaku untuk A/B; Mode C
+> mati justru ketika Vulkan bekerja. Rincian + langkah uji silang: PROYEK.md §8.1.
+
 **Petunjuk dari kematian yang log-nya sempat terbaca.** Dua entri exception
 muncul berurutan pada satu kematian:
 
@@ -125,9 +149,35 @@ di tengah jalan** (`ResponseEnded`), yang berarti llama-server berhenti
 menjawab. Itu tetap petunjuk berguna untuk §1.1, karena menunjukkan llama-server
 memang bisa berhenti di tengah prompt processing.
 
-Dugaan terkuat masih **fail-fast di tingkat driver GPU**: rebutan antara
-perangkat D3D11 kita (renderer Live2D) dan konteks Vulkan llama-server
-(`VTUBER_VULKAN_NGL=99`, `VTUBER_VULKAN_CTX=16384`, KV cache f16).
+> ### 🔄 Diukur ulang 2026-10-08 sore — dua asumsi di atas terbukti SALAH
+>
+> | Asumsi | Kenyataan |
+> |---|---|
+> | fail-fast senyap di tingkat driver | **Exit code `0`.** Keluar bersih: tanpa exception, tanpa `DisposeAsync`, tanpa entri Event Log apa pun (Application + System diperiksa pada menit kematian — kosong) |
+> | rebutan D3D11 vs Vulkan llama-server | **Bukan.** Dengan `-ngl 0` (llama murni CPU) tetap **mati 2 dari 6**. Dan pernah mati saat `llama-server` **belum menyala sama sekali** |
+>
+> **Fakta yang selama ini tidak tercatat:** GPU = **Intel Iris Xe** (terintegrasi,
+> VRAM = RAM sistem). RAM 16 GB, **~3,7 GB bebas saat idle**.
+>
+> **Titik mati selalu identik:** di dalam `CubismShader_D3D11::GenerateShaders`,
+> `crash.log` berhenti di **13.449 bita**. Kompilasi shader itu terukur memakan
+> **13–19 detik** di GPU ini pada jalan yang selamat.
+>
+> **Dua mode yang berbeda** (jangan disatukan lagi):
+>
+> | Mode | Ciri | Sebab |
+> |---|---|---|
+> | A | mati ~16 dtk, `crash.log` 13.449 bita, llama boleh belum menyala | kompilasi shader; proses **diakhiri** (exit 0), belum tahu oleh siapa |
+> | B | mati ~28 dtk, memori bebas **3 MiB**, llama-server ikut mati | memori habis — model 5,1 GB + KV cache f16 ctx 16.384 |
+>
+> Mode B **langsung ditutup** oleh `VTUBER_VULKAN_CTX` 16384 → 4096 (empat kali
+> lipat dari ctx 4096 yang benar-benar dipakai).
+
+Dugaan untuk Mode A sekarang: kompilasi ~70 shader D3D pada Intel Iris Xe
+berjalan di utas UI dan **memblokirnya ~17 detik**; selama itu proses diakhiri
+dengan exit 0 oleh sesuatu di luar kode kita. Penanda `AppDomain.ProcessExit`
+sudah dipasang untuk membedakan "diakhiri dari dalam CLR" dan
+"`TerminateProcess` dari luar".
 
 **Dampak.** Ini cacat paling serius yang tersisa. Aplikasi adalah pendamping
 AI/VTuber — tanpa LLM lokal yang andal, fungsi utamanya (mengobrol) tidak bisa
@@ -215,7 +265,39 @@ Uji paritas phonemizer tetap **boleh** dilakukan kalau dianggap berguna, tetapi
 bukan lagi penghambat apa pun. Kalau nanti ingin tetap ada, gantinya adalah uji
 fonem dasar terhadap kalimat acuan, bukan paritas byte-per-byte.
 
-### 1.5 🟠 Status "memuat model" tidak dikenali — UI menampilkan OFFLINE
+### 1.5 ✅ SELESAI (9 Okt) — status "memuat model" kini dikenali
+
+Cacat ini dan **1.6 di bawah** ternyata satu keluarga: keduanya soal 503
+llama-server yang tidak dikenali. Selesai bersama.
+
+### 1.6 ✅ SELESAI (9 Okt) — "chat tidak menjawab" karena batas tunggu terlalu pendek
+
+**Gejala.** Master mengirim pesan, tidak ada balasan apa pun. Aplikasi tetap
+tampil dan hidup, jadi mudah disalahartikan sebagai masalah koneksi atau
+konfigurasi model.
+
+**Sebab pasti, terukur.** `LlamaServerProcess.StartAsync` menunggu kesiapan
+llama-server maksimal `MaksPercobaanSehat × JedaSehatMs` = **120 × 250 ms =
+30 detik**. GGUF Gemma 4B (5,12 GB) di mesin ini butuh **38–45 detik** dari
+`loading model` sampai `listening on http://127.0.0.1:8788` — diukur langsung
+di `tools/bukti/`. Jadi loop selalu kehabisan percobaan tepat saat model hampir
+siap, mengembalikan `"waktu tunggu llama-server habis"`, lalu pemanggilnya
+menjalankan `Stop()` — **llama-server yang sehat dimatikan dari bawah**.
+
+Sebelum batas itu habis, setiap percobaan hanya mencatat `health HTTP 503` dan
+membuang badannya, sehingga penyebab sebenarnya ("model masih dimuat") tidak
+pernah terlihat.
+
+**Perbaikan.**
+1. Batas tunggu 30 dtk → **120 dtk**.
+2. Badan 503 dibaca lewat `HealthProbe` (Core) — pesan terakhir menjadi
+   `"model masih dimuat ke VRAM"`, bukan `"health HTTP 503"`.
+3. `HealthProbe` yang sama dipakai `OpenAiCompatibleProvider`, jadi kedua sisi
+   mengenali bentuk badan yang identik (`docs/PROYEK.md` §8.6).
+
+**Bukti.** `tools/bukti/log-lama/` memuat jalan di mana `[llama] ... model
+loaded` dan `listening on ...` tercatat, tetapi aplikasi tetap melaporkan
+`! inferensi lokal belum siap: health HTTP 503`.
 
 **Sebab.** `OpenAiCompatibleProvider.AvailableAsync` (`Inference/OpenAiCompatibleProvider.cs`
 baris 65–74) mencari `{"status":"loading model"}`, padahal badan 503
@@ -429,8 +511,9 @@ kebersihannya sudah diverifikasi — tidak ada perubahan sistem yang tertinggal.
 2. **Hentikan kematian senyap (§1.1).** Sudah direproduksi 2/2, jadi tidak
    perlu lagi berburu sampel — langsung uji tuas `.env` satu per satu
    (urutan dan alasannya di `docs/PROYEK.md` §8.1). Ini yang memblokir M11.
-3. **Perbaiki pengenalan 503 (§1.5)** — kecil, aman, langsung menghilangkan
-   kebingungan "OFFLINE padahal sedang memuat".
+3. ~~**Perbaiki pengenalan 503 (§1.5)**~~ ✅ sudah selesai 9 Okt, sekaligus
+   menutup **§1.6** (batas tunggu llama 30 dtk → 120 dtk) — jadi kebingungan
+   "OFFLINE padahal sedang memuat" dan "chat tidak menjawab" hilang bersama.
 4. **Integrasikan rantai suara M11 (§2.2) + LipSync (§1.2)** — bersama-sama,
    karena lip-sync butuh audio. Rantainya tidak perlu diriset lagi; resepnya di
    `tools/tts/README.md`. Sekalian ganti `HealthSnapshot.Tts` yang di-hardcode.

@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SilverWolf.Core\SilverWolf.Core.csproj" />
+    <InternalsVisibleTo Include="SilverWolf.Services.Tests" />
   </ItemGroup>
 
   <!--

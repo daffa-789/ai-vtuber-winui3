@@ -39,6 +39,11 @@ namespace SilverWolf.App
             Shell.Loaded += OnLoaded;
             Closed += OnClosed;
 
+            // Jeda render Live2D saat jendela tidak fokus. Di GPU terintegrasi
+            // (VRAM = RAM), loop 30 fps yang jalan di latar membakar CPU/GPU
+            // dan menambah tekanan memori yang tidak terlihat siapa pun.
+            Activated += OnActivated;
+
             InitializeWindowing();
 
             CrashLog.Tahap("MainWindow: InitializeWindowing() selesai");
@@ -64,21 +69,40 @@ namespace SilverWolf.App
             }
         }
 
+        /// <summary>
+        /// Jeda/lanjutkan render Live2D saat fokus jendela berubah.
+        /// <paramref name="args"/> memuat <c>WindowActivationState</c>: Deactivated
+        /// berarti jendela kehilangan fokus (atau diminimize) — hentikan loop.
+        /// </summary>
+        private void OnActivated(object sender, WindowActivatedEventArgs args)
+        {
+            var aktif = args.WindowActivationState
+                != WindowActivationState.Deactivated;
+
+            Stage.UbahFokus(aktif);
+        }
+
         private async void OnClosed(object sender, WindowEventArgs e)
         {
-            await ViewModel.DisposeAsync();
+            // Lepaskan dulu handler aktivasi supaya tidak ada `UbahFokus` yang
+            // menyala di tengah pembongkaran.
+            Activated -= OnActivated;
 
-            // Bongkar renderer native SEBELUM proses berakhir.
-            //
-            // Tanpa ini, DLL dibongkar dalam keadaan perangkat D3D11, swap chain,
-            // dan seluruh objek Cubism masih hidup. Pada build Debug, CRT-nya
-            // menanggapinya dengan dialog
-            //   "Microsoft Visual C++ Runtime Library — Debug Error!
-            //    abort() has been called"
-            // tepat saat jendela ditutup: jendelanya hilang, tetapi prosesnya
-            // tertahan oleh dialog itu. Terverifikasi bisa direproduksi dan
-            // hilang setelah perbaikan ini.
-            Live2DNative.Hentikan();
+            // Mitigasi teardown: stop render/retry sebelum menutup layanan.
+            // Ini belum membuktikan penyebab ataupun penyelesaian dialog abort().
+            Stage.Berhenti();
+            try
+            {
+                await ViewModel.DisposeAsync();
+            }
+            catch (Exception galat)
+            {
+                CrashLog.Tulis("MainWindow.OnClosed", galat);
+            }
+            finally
+            {
+                Live2DNative.Hentikan();
+            }
         }
 
         private void InitializeWindowing()

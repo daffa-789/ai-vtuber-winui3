@@ -77,3 +77,14 @@ native/**/build/
 
 # ---- File yang dihasilkan saat runtime ----
 .env
+
+# ---- Alat diagnosis: jangan ikut repo publik ----
+#
+# `tools/bukti/` berisi log crash, tangkapan layar (layar-penuh.png), dan audio
+# uji TTS. Semuanya menyebut path mesin lokal (C:\Users\...), jadi tidak layak
+# berada di repo publik. Foldernya tetap ada di mesin untuk dipakai sendiri.
+tools/bukti/
+
+# ---- Cache Python ----
+__pycache__/
+*.pyc

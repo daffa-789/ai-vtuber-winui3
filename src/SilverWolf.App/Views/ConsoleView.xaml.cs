@@ -1,27 +1,25 @@
-using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using SilverWolf.App.ViewModels;
 
 namespace SilverWolf.App.Views;
 
-/// <summary>Panel kanan — port komponen <c>Konsol.jsx</c>.</summary>
+/// <summary>
+/// Panel kanan — HANYA percakapan.
+///
+/// Sejak 2026-10-08 panel ini tidak lagi punya header, kartu HUD, atau
+/// telemetri: tiga blok itu dibuang dari XAML atas permintaan Master ("saya
+/// butuh chatnya aja"). Karena itu handler <c>OnNeuroDiklik</c> ikut dihapus —
+/// tombolnya sudah tidak ada, dan membiarkan handler tanpa pemakai membuat
+/// pemeriksaan "tidak ada kode mati" berbohong.
+///
+/// Mode otonom sendiri TIDAK hilang: nilainya tetap hidup di
+/// <c>CompanionViewModel.AutonomousMode</c> dan tetap dipakai pekerja proaktif.
+/// Kalau tombolnya diperlukan lagi, cukup pasang kembali Button dengan
+/// <c>Command="{Binding PancingObrolanCommand}"</c> — tanpa perlu handler.
+/// </summary>
 public sealed partial class ConsoleView : UserControl
 {
     public ConsoleView()
     {
         InitializeComponent();
-    }
-
-    /// <summary>
-    /// Mode otonom gaya Neuro-sama. Nilainya hidup di
-    /// <c>CompanionViewModel.AutonomousMode</c>; tombol ini hanya membaliknya,
-    /// sedangkan teksnya mengikuti <c>TeksNeuro</c>.
-    /// </summary>
-    private void OnNeuroDiklik(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is CompanionViewModel vm)
-        {
-            vm.AutonomousMode = !vm.AutonomousMode;
-        }
     }
 }

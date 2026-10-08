@@ -74,6 +74,47 @@ public sealed class AppConfig
     public string SttModel { get; set; } = "base";
     public string SttModelPath { get; set; } = "assets/whisper";
 
+    // ── TTS (M11) ────────────────────────────────────────────────────────────
+
+    /// <summary>VTUBER_TTS — hidupkan/matikan suara.</summary>
+    public bool TtsHidup { get; set; } = true;
+
+    /// <summary>
+    /// VTUBER_TTS_RANTAI — urutan rantai yang dicoba, dipisah koma.
+    /// Contoh: "piper+rvc,piper" berarti coba Piper+RVC dulu; kalau gagal,
+    /// jatuh ke Piper saja. Urutan ini penting: RVC bisa gagal (index/torch)
+    /// dan kita tetap ingin ada suara, bukan diam.
+    /// </summary>
+    public string TtsRantai { get; set; } = "piper+rvc,piper";
+
+    /// <summary>
+    /// VTUBER_TTS_PER_KALIMAT — proses per kalimat lalu putar berurutan.
+    /// Ini bukan sekadar optimasi: RVC di CPU berjalan RTF 1,1–2,5×, jadi
+    /// menunggu seluruh balasan selesai akan terasa sangat lambat.
+    /// </summary>
+    public bool TtsPerKalimat { get; set; } = true;
+
+    /// <summary>VTUBER_TTS_BATAS_DETIK — batas waktu satu kalimat diproses.</summary>
+    public int TtsBatasDetik { get; set; } = 40;
+
+    /// <summary>VTUBER_TTS_CACHE — simpan hasil WAV agar kalimat berulang tak dihitung ulang.</summary>
+    public bool TtsCache { get; set; } = true;
+
+    /// <summary>VTUBER_RVC — apakah tahap RVC dipakai.</summary>
+    public bool Rvc { get; set; } = true;
+
+    public string RvcModel { get; set; } = "SilverWolfJP";
+    public string RvcVersi { get; set; } = "v2";
+    public string RvcF0 { get; set; } = "rmvpe";
+    public int RvcTranspose { get; set; } = -3;
+    public double RvcIndeksLaju { get; set; } = 0.6;
+
+    /// <summary>
+    /// Jalur Python untuk rantai TTS. Kalau kosong, dicari otomatis dari
+    /// <c>VTUBER_PY_RVC</c> lalu dari daftar kandidat yang dikenal.
+    /// </summary>
+    public string PyRvc { get; set; } = string.Empty;
+
     // ── Batas server (konstanta di aplikasi lama) ────────────────────────────
 
     public int MaksBody { get; set; } = 1024 * 1024;
@@ -174,6 +215,23 @@ public static class ConfigReader
             SttHidup = env.Bool("VTUBER_STT", true),
             SttModel = env.Value("VTUBER_STT_MODEL", "base"),
             SttModelPath = env.Value("VTUBER_STT_MODEL_PATH", "assets/whisper"),
+
+            // ── TTS (M11) ────────────────────────────────────────────────────
+            // Semua nilai dibaca dari .env; itu satu-satunya sumber kebenaran
+            // (lihat tools/tts/README.md). Profil suara terkunci:
+            // transpose -3, index_rate 0.6, f0 rmvpe.
+            TtsHidup = env.Bool("VTUBER_TTS", true),
+            TtsRantai = env.Value("VTUBER_TTS_RANTAI", "piper+rvc,piper"),
+            TtsPerKalimat = env.Bool("VTUBER_TTS_PER_KALIMAT", true),
+            TtsBatasDetik = env.Int("VTUBER_TTS_BATAS_DETIK", 40),
+            TtsCache = env.Bool("VTUBER_TTS_CACHE", true),
+            Rvc = env.Bool("VTUBER_RVC", true),
+            RvcModel = env.Value("VTUBER_RVC_MODEL", "SilverWolfJP"),
+            RvcVersi = env.Value("VTUBER_RVC_VERSI", "v2"),
+            RvcF0 = env.Value("VTUBER_RVC_F0", "rmvpe"),
+            RvcTranspose = env.Int("VTUBER_RVC_TRANSPOSE", -3),
+            RvcIndeksLaju = env.Float("VTUBER_RVC_INDEKS_LAJU", 0.6),
+            PyRvc = env.Value("VTUBER_PY_RVC", string.Empty),
         };
     }
 }

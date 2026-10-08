@@ -14,6 +14,18 @@
       yang diubah saat balasan dialirkan), jadi tidak ada pengikatan ulang
       manual. Baris galat memakai TeksGalat yang sudah kosong bila tidak ada
       galat — tanpa konverter Visibility.
+
+      Penanda loading (9 Okt): gelembung yang belum punya isi apa pun
+      (menunggu token pertama LLM, atau menunggu suara RVC siap) menampilkan
+      ProgressRing yang berputar. Visibilitas dikendalikan properti
+      VisibilitasMemuat/VisibilitasKonten di ChatBubble, jadi tidak perlu
+      konverter.
+
+      Kenapa ProgressRing, bukan animasi titik buatan sendiri:
+      ProgressRing adalah kontrol bawaan WinUI yang animasinya sudah benar,
+      hemat, dan tidak perlu Storyboard + x:Name. Di dalam DataTemplate,
+      x:Name tidak bisa ditarik dari Storyboard bersama (namescope berbeda),
+      jadi Storyboard manual justru rapuh. ProgressRing bebas dari masalah itu.
     -->
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4">
         <ItemsControl ItemsSource="{Binding Messages}">
@@ -29,11 +41,41 @@
                                 Text="{Binding Role}"
                                 FontSize="11"
                                 Foreground="#FF64748B" />
+
+                            <!-- Isi gelembung: disembunyikan selama loading. -->
                             <TextBlock
                                 Text="{Binding Content}"
                                 TextWrapping="Wrap"
                                 FontSize="14"
-                                Foreground="#FFE2E8F0" />
+                                Foreground="#FFE2E8F0"
+                                Visibility="{Binding VisibilitasKonten}" />
+
+                            <!-- Animasi loading. -->
+                            <StackPanel
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                Padding="0,2,0,2"
+                                Visibility="{Binding VisibilitasMemuat}">
+                                <ProgressRing
+                                    IsActive="{Binding SedangMemuat}"
+                                    AutomationProperties.Name="Menyiapkan balasan"
+                                    Width="16"
+                                    Height="16"
+                                    Foreground="#FF94A3B8" />
+                                <TextBlock
+                                    Text="{Binding TeksMemuat}"
+                                    TextWrapping="Wrap"
+                                    FontSize="12"
+                                    Foreground="#FF94A3B8"
+                                    VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <TextBlock
+                                Text="{Binding CatatanSuara}"
+                                TextWrapping="Wrap"
+                                FontSize="12"
+                                Foreground="#FF94A3B8" />
+
                             <TextBlock
                                 Text="{Binding TeksGalat}"
                                 TextWrapping="Wrap"

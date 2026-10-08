@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using SilverWolf.Core.Domain;
+using SilverWolf.Core.Inference;
 
 namespace SilverWolf.Services.Inference;
 
@@ -64,10 +65,16 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
 
             if ((int)res.StatusCode == 503)
             {
-                var body = await res.Content.ReadFromJsonAsync<JsonElement?>(cancellationToken: ct).ConfigureAwait(false);
-                if (body is { } b
-                    && b.TryGetProperty("status", out var status)
-                    && status.GetString() == "loading model")
+                // Bentuk badan 503 llama-server yang sebenarnya adalah
+                //   {"error":{"message":"Loading model","type":"unavailable_error","code":503}}
+                // bukan {"status":"loading model"} seperti dugaan semula. Kode
+                // sebelumnya mencari properti "status" yang tidak pernah ada,
+                // sehingga model yang sedang dimuat dilaporkan "tidak-jalan"
+                // dan tombolnya menampilkan OFFLINE (docs/PROYEK.md §8.6).
+                // Pengenalan bentuknya dipindah ke HealthProbe di Core supaya
+                // bisa dikunci unit test.
+                var badan = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                if (HealthProbe.MenandakanSedangMemuat((int)res.StatusCode, badan))
                 {
                     return new ProviderAvailability { Ok = false, Loading = true, Reason = "memuat model ke VRAM..." };
                 }

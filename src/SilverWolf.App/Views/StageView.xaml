@@ -21,7 +21,6 @@
     <Grid Background="#FF0B1018">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- TODO(M8): isi panel ini dari SilverWolf.Live2D (C++/WinRT + Cubism). -->
@@ -61,17 +60,25 @@
                 Margin="16,8,16,8" />
         </Border>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="12,0,12,12" Spacing="8">
-            <Button
-                Content="{Binding TeksMirror}"
-                Click="OnMirrorDiklik"
-                FontSize="12"
-                Padding="12,6,12,6" />
-            <TextBlock
-                Text="{Binding Expression}"
-                Foreground="#FF64748B"
-                FontSize="12"
-                VerticalAlignment="Center" />
-        </StackPanel>
+        <!--
+          Tombol MIRROR dibuang atas permintaan Master (9 Okt). Sakelar itu
+          tidak pernah benar-benar dicari di CompanionViewModel —
+          MirrorTrack/TeksMirror/OnMirrorDiklik masih ada di C# tapi sudah
+          tidak punya penampil, dan itu disengaja: jangan dikembalikan ke XAML
+          tanpa diminta ulang.
+        -->
+        <!--
+          Label ekspresi dibuang atas permintaan Master (9 Okt).
+
+          Sebelumnya ada <TextBlock Text="{Binding Expression}"> di sini yang
+          menampilkan kata mentah seperti "sebal"/"senyum". Master meminta teks
+          itu hilang, jadi seluruh baris bawah (Grid.Row="1") ikut dibuang —
+          bukan hanya teksnya — supaya tidak menyisakan pita kosong.
+
+          Properti Expression di CompanionViewModel sengaja TIDAK dihapus dan
+          rantai emosi hulu tetap hidup; hanya penampil XAML-nya yang hilang.
+          Untuk mengembalikan, tambahkan RowDefinition Height="Auto" lagi lalu
+          satu TextBlock dengan Text="{Binding Expression}".
+        -->
     </Grid>
 </UserControl>

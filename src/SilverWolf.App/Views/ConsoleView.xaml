@@ -9,110 +9,58 @@
     mc:Ignorable="d">
 
     <!--
-      Panel kanan — port komponen Konsol.jsx.
+      Panel kanan — HANYA percakapan.
 
-      Urutannya sama dengan aplikasi lama:
-        1. header (tombol NEURO-SAMA + tombol status)
-        2. kartu HUD ikatan
-        3. telemetri GPU / MEM / TTS
-        4. DaftarPesan  -> MessageListView
-        5. Komposer     -> ComposerView
+      Permintaan Master (2026-10-08): "hapus yang kaya level exp dan lainnya,
+      saya butuh chatnya aja." Jadi tiga blok lama dibuang seluruhnya:
 
-      Tombol NEURO-SAMA memakai Content yang sudah berubah mengikuti
-      AutonomousMode (bukan IsChecked dua-arah), supaya tidak bergantung pada
-      konversi bool -> bool? milik ToggleButton.
+        - header  : tombol NEURO-SAMA + tombol status provider
+        - HUD     : ikatan, 🌸 Elus Kepala, ⚡ Pancing Obrolan, TeksXp,
+                    ProgressBar, Kehangatan, Atmosfer, Sikap
+        - telemetri: GPU / MEM / TTS
+
+      Yang tersisa: daftar pesan (baris tengah, melebar penuh), satu banner
+      galat yang hanya muncul kalau memang ada, dan komposer.
+
+      Banner itu bukan hiasan. Sebelum ini `HealthError` diisi tetapi tidak ada
+      satu pun elemen XAML yang menampilkannya — setelah panel status dibuang,
+      kegagalan runtime (mis. llama-server tidak jalan) hanya terlihat sebagai
+      "chat yang tidak pernah menjawab" tanpa sebab. Satu baris teks itu
+      menggantikan seluruh panel status yang dibuang.
+
+      JANGAN bingung dengan nama berkasnya: ConsoleView dan CompanionViewModel
+      masih memuat seluruh properti HUD itu, dan itu memang disengaja —
+      mesinnya (kizuna, XP, telemetri) tidak dibuang, hanya tampilannya.
+      Kalau nanti Master minta panel ekspresi/perasaan dikembalikan, cukup
+      tulis ulang XAML di sini tanpa menyentuh satu pun baris C#.
     -->
     <Grid Background="#FF0E1420">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 1. header -->
-        <Grid Grid.Row="0" Margin="12,12,12,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-
-            <Button
-                Grid.Column="0"
-                Content="{Binding TeksNeuro}"
-                Click="OnNeuroDiklik"
+        <!-- Galat runtime. Tidak mengambil ruang sama sekali saat tidak ada
+             galat, karena Visibility berubah menjadi Collapsed. Pengikatan
+             bool -> Visibility di sini memakai konversi bawaan WinUI 3;
+             jangan pasang konverter khusus. -->
+        <Border
+            Grid.Row="0"
+            Margin="12,12,12,0"
+            Padding="10,8,10,8"
+            CornerRadius="8"
+            Background="#FF2A1620"
+            Visibility="{Binding AdaHealthError}">
+            <TextBlock
+                Text="{Binding HealthError}"
+                TextWrapping="Wrap"
                 FontSize="12"
-                Padding="12,6,12,6" />
-
-            <Button
-                Grid.Column="2"
-                Content="{Binding StatusTombol}"
-                Command="{Binding SegarkanCommand}"
-                FontSize="12"
-                Padding="12,6,12,6" />
-        </Grid>
-
-        <!-- 2. kartu HUD ikatan -->
-        <Border Grid.Row="1" Margin="12,0,12,8" Padding="12" CornerRadius="10" Background="#FF131A26">
-            <StackPanel Spacing="6">
-                <TextBlock Text="{Binding TeksIkatan}" FontSize="15" Foreground="#FFE2E8F0" />
-
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Content="🌸 Elus Kepala" Command="{Binding ElusKepalaCommand}" FontSize="12" />
-                    <Button Content="⚡ Pancing Obrolan" Command="{Binding PancingObrolanCommand}" FontSize="12" />
-                </StackPanel>
-
-                <TextBlock Text="{Binding TeksXp}" FontSize="12" Foreground="#FF94A3B8" />
-                <ProgressBar Value="{Binding Kemajuan}" Maximum="1" Height="6" />
-
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" FontSize="12" Foreground="#FF94A3B8">
-                        <Run Text="Kehangatan " />
-                        <Run Text="{Binding TeksKehangatan}" />
-                    </TextBlock>
-                    <TextBlock Grid.Column="1" FontSize="12" Foreground="#FF94A3B8">
-                        <Run Text="Atmosfer " />
-                        <Run Text="{Binding TeksAtmosfer}" />
-                        <Run Text=" | Sikap " />
-                        <Run Text="{Binding TeksSikap}" />
-                    </TextBlock>
-                </Grid>
-            </StackPanel>
+                Foreground="#FFF87171" />
         </Border>
 
-        <!-- 3. telemetri -->
-        <Border Grid.Row="2" Margin="12,0,12,8" Padding="10,6,10,6" CornerRadius="8" Background="#FF101724">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" FontSize="11" Foreground="#FF64748B" TextTrimming="CharacterEllipsis">
-                    <Run Text="GPU " />
-                    <Run Text="{Binding TeksGpu}" />
-                </TextBlock>
-                <TextBlock Grid.Column="1" FontSize="11" Foreground="#FF64748B" TextTrimming="CharacterEllipsis">
-                    <Run Text="MEM " />
-                    <Run Text="{Binding TeksMemori}" />
-                </TextBlock>
-                <TextBlock Grid.Column="2" FontSize="11" Foreground="#FF64748B">
-                    <Run Text="TTS " />
-                    <Run Text="{Binding TeksTts}" />
-                </TextBlock>
-            </Grid>
-        </Border>
+        <views:MessageListView Grid.Row="1" Margin="8,12,8,8" />
 
-        <!-- 4. DaftarPesan -->
-        <views:MessageListView Grid.Row="3" Margin="8,0,8,8" />
-
-        <!-- 5. Komposer -->
-        <views:ComposerView Grid.Row="4" Margin="12,0,12,12" />
+        <views:ComposerView Grid.Row="2" Margin="12,0,12,12" />
     </Grid>
 </UserControl>

@@ -16,6 +16,7 @@ punya satu tugas masing-masing — bukan salinan.
 | Tahu seluruh konteks proyek | **`PROYEK.md`** (dokumen tunggal) |
 | Melanjutkan pekerjaan dari sesi AI sebelumnya | **`PROYEK.md` §0** — blok siap tempel |
 | Tahu apa yang masih rusak dan seberapa parah | **`LAPORAN-MASALAH.md`** |
+| Menyetel rendering/anima agar tetap ringan | **`PERFORMA.md`** — angka terukur mesin ini |
 | Membangun, menjalankan, atau menguji | `README.md` (akar) + **`PROYEK.md` §4** |
 | Mengerjakan suara (TTS + RVC) | **`../tools/tts/README.md`** |
 | Mengerjakan fitur yang dipindah dari aplikasi web | `migrasi/01-peta-fitur.md` → `02-dependensi.md` → `03-langkah-migrasi.md` |
@@ -31,6 +32,7 @@ Semuanya di `docs/`, kecuali yang ditandai lain.
 |---|---|---|
 | **`PROYEK.md`** | **Dokumen tunggal.** Status milestone, perintah, angka golden, kontrak perilaku, seluruh masalah nyata + penyelesaiannya, cacat terbuka, alat diagnosis, jebakan toolchain & Cubism 5, konvensi, peta migrasi, riwayat revisi | Ada perubahan besar / milestone selesai |
 | `LAPORAN-MASALAH.md` | Prioritas: apa yang rusak, tingkat, sebab, dampak, dan urutan tindak lanjut | Ada cacat baru atau cacat tertutup |
+| `PERFORMA.md` | Angka **terukur** render/anima/suara di mesin Master + tips + sisa penghematan | Setelan performa berubah / ada pengukuran baru |
 | `README.md` *(akar repo)* | Orientasi cepat: prasyarat, struktur folder, cara build & jalan, keputusan arsitektur, batasan | Struktur atau prasyarat berubah |
 | `../tools/tts/README.md` | **Rantai suara**: cara pakai, aset, profil suara terkunci, angka tuning, latensi, jebakan | Parameter suara berubah |
 | `migrasi/01-peta-fitur.md` | Pemetaan layar/panel/state/endpoint → padanan C#, fitur yang tidak bisa dipindah 1:1 | Ada keputusan pemetaan baru |

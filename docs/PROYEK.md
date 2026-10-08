@@ -17,8 +17,8 @@ M10, M12–M14 belum.
 |---|---|
 | Aplikasi target | `C:\Users\Daffa\Desktop\AI Vtuber Project\AI Vtuber WINUI3\` |
 | Aplikasi sumber | Electron + Vue 3 + server Node — **sudah dihapus**; aset & dokumen sudah dipindah, sumber diarsipkan ke `docs/arsip/sumber-web/` |
-| Verifikasi terakhir | build x64 **0 error / 0 warning** · **108 unit test lulus** · aplikasi dijalankan dan model Live2D tampil · **rantai suara terbukti** (`tools/tts/`, hasil acuan `contoh/04-transpose-3.wav`) |
-| ⚠️ Cacat aktif | aplikasi **mati senyap** — direproduksi 2/2 pada 2026-10-08 (§8.1). Ini penghambat utama sebelum TTS diintegrasikan |
+| Verifikasi terakhir | build x64 **0 error / 0 warning** · **114 unit test lulus** · aplikasi dijalankan dan model Live2D tampil · **rantai suara terbukti** (`tools/tts/`, hasil acuan `contoh/04-transpose-3.wav`) · **M11 tersambung** — memutar audio sungguhan, `crash.log` memuat `tts: siap` |
+| ⚠️ Cacat aktif | aplikasi **mati senyap** — **tiga mode** teridentifikasi (A: kompilasi shader, **terbukti INTERMITEN**, B: memori habis, C: saat Vulkan mulai inferensi). §8.1 |
 
 ---
 
@@ -40,12 +40,22 @@ STATUS: M0-M2, M4-M9 selesai. M8 berjalan (Live2D tampil + efek hidup).
         teks Indonesia -> Piper -> RVC SilverWolf. Belum tersambung ke aplikasi.
         M11 tinggal integrasi (TtsWorker + NAudio + LipSync), bukan riset lagi.
 
-⚠️  CACAT AKTIF, BACA SEBELUM APA PUN: aplikasi MATI SENYAP. Direproduksi
-    2 dari 2 peluncuran pada 8 Okt 2026 (sekali saat membuat panggung Live2D,
-    sekali saat prompt LLM pertama diproses). Tidak ada Event Log, tidak ada
-    dump WER, tidak ada DisposeAsync — fail-fast senyap. Dugaan terkuat:
-    rebutan driver GPU antara D3D11 (Cubism) dan Vulkan (llama-server).
-    Bukti: tools/bukti/mati-saat-inferensi-2026-10-08.log
+⚠️  CACAT AKTIF, BACA SEBELUM APA PUN: aplikasi MATI SENYAP, intermiten.
+    DIUKUR ULANG 8-9 Okt. TIGA MODE, jangan disatukan:
+      A) mati di dalam kompilasi shader Cubism (crash.log beku 13.449 bita,
+         detik ke-13..19)
+      B) mati karena memori habis (sisa RAM ~3 MiB, llama ikut mati, ~28 dtk)
+      C) mati SAAT VULKAN MULAI INFERENSI — lama tidak terlihat; jalan-7 di
+         tools/bukti/ mereproduksi keluhan Master persis: log putus di
+         "launch_slot_: processing task" tanpa balasan apa pun.
+    Fakta yang berlaku untuk ketiganya: exit code 0 = KELUAR BERSIH (bukan
+    fail-fast); nol entri Event Log. Jadi proses DIHENTIKAN dari luar CLR.
+    Yang sudah disingkirkan: fail-fast, exception, penutupan jendela,
+    kehabisan memori (untuk A), dan llama-server (untuk A).
+    HATI-HATI: kesimpulan lama "bukan rebutan GPU" itu benar untuk A/B tetapi
+    Mode C justru mati tepat ketika Vulkan bekerja -> jangan digeneralisasi.
+    GPU = Intel Iris Xe (terintegrasi, memori bersama RAM 16 GB, ~3,7 GB bebas).
+    Baca docs/PROYEK.md §8.1 (termasuk pembaruan 2026-10-09) sebelum apa pun.
     Jangan bangun fitur di atas aplikasi yang belum bisa bertahan hidup.
 
 PEKERJAAN SUARA (M11) — rantainya SUDAH JALAN, jangan diriset ulang:
@@ -64,7 +74,7 @@ PEKERJAAN SUARA (M11) — rantainya SUDAH JALAN, jangan diriset ulang:
 
 VERIFIKASI (lakukan sebelum menulis kode apa pun):
   dotnet build SilverWolf.sln -p:Platform=x64 -c Debug    -> 0 error, 0 warning
-  dotnet test tests/SilverWolf.Core.Tests/...             -> 108 lulus
+  dotnet test tests/SilverWolf.Core.Tests/...             -> 114 lulus
   # native (MSBuild.exe DIBLOKIR; dotnet build tak punya VCTargetsPath):
   bash native/SilverWolf.Live2D/build-cli.sh Release
   # C# — Platform=x64 DAN SelfContained WAJIB:
@@ -158,13 +168,29 @@ Dua koreksi terhadap catatan lama:
    menyebut hilangnya ContentVec ONNX sebagai sebab RVC mati di aplikasi web.
    Ternyata `rvc-python` memakai `hubert_base.pt` lewat fairseq, bukan ONNX.
 
-**Belum.** Yang tersisa murni pekerjaan integrasi, bukan riset:
-`src/SilverWolf.TtsWorker/`, pemutaran NAudio, cache (`VTUBER_TTS_CACHE`),
-lip-sync `ParamMouthOpenY`, dan mengganti `HealthSnapshot.Tts` yang masih
-di-hardcode `"siap"`. **Integrasi sengaja ditahan sampai §8.1 tertutup** —
-menambah fitur ke aplikasi yang mati senyap tidak ada gunanya.
+**SELESAI 2026-10-09 — integrasi M11 sudah dikerjakan.** Akar keluhan Master
+("pesannya sudah jalan, TTS-nya tidak balas") terbukti: **tidak ada satu pun
+kode pemutaran audio di seluruh proyek.** NAudio dirujuk di csproj sehingga
+DLL-nya ikut tersalin, tetapi `WaveOutEvent`/`AudioFileReader` **tidak pernah
+dipanggil**. `KirimAsync` mengalirkan balasan ke gelembung lalu berhenti.
 
-**Blocker yang masih nyata:** hanya §8.1 (kematian senyap).
+Yang ditambahkan:
+
+| Berkas | Isi |
+|---|---|
+| `src/SilverWolf.Services/Tts/TtsWorker.cs` | menjalankan `tools/tts/buat_suara.py` sebagai proses; potong per kalimat; cache SHA-256 atas **teks + seluruh parameter suara**; batas `TtsBatasDetik` + `Kill(entireProcessTree)` |
+| `src/SilverWolf.Services/Tts/PcmPlayer.cs` | `WaveOutEvent` + `AudioFileReader` (satu instance dipakai ulang); `LevelBerubah` tiap 16 ms untuk LipSync |
+| `src/SilverWolf.Services/Tts/TtsPipeline.cs` | menyatukan produksi + pemutaran; balasan terbaru selalu menang |
+| `src/SilverWolf.Core/Configuration/AppConfig.cs` | blok setelan TTS/RVC (baris ~219–234), dibaca dari `.env` |
+| `CompanionViewModel` | `SiapkanTts()`, `BacakanAsync()`, pemicu di `AlirkanAsync`; `TeksTts` kini melaporkan `AlasanSuaraHening` alih-alih `"siap"` palsu |
+
+**Verifikasi:** build solusi 0 warning/0 error; `dotnet test` **114/114 lulus**;
+rantai dijalankan dengan perintah persis seperti yang dikirim aplikasi →
+`sw-e2e.wav` **40.000 Hz mono 16 bit, 4,16 dtk, RMS 6.105** (ADA SUARA);
+`crash.log` aplikasi nyata memuat `tts: siap (rantai=piper+rvc,piper, rvc=True)`.
+
+**Blocker yang masih nyata:** hanya §8.1 (kematian senyap, tiga mode).
+Integrasi sudah jalan, tetapi aplikasi masih bisa mati senyap — lihat §8.1.
 
 ---
 
@@ -203,6 +229,26 @@ docs/                            dokumen ini + migrasi/ + arsip/
 `Models/ChatBubble.cs`; `ViewModels/CompanionViewModel.cs`;
 `Views/{StageView,ConsoleView,MessageListView,ComposerView}.xaml(.cs)`;
 `Native/Live2DNative.cs`.
+
+> **Catatan `ConsoleView` (9 Okt 2026).** Panel kanan **sengaja dibuat polos**:
+> banner galat + `MessageListView` + `ComposerView`, titik. Header
+> NEURO-SAMA/status, kartu HUD ikatan (Lv/XP/ProgressBar/Kehangatan/Atmosfer/
+> Sikap, Elus Kepala, Pancing Obrolan), dan telemetri GPU/MEM/TTS dibuang dari
+> **tampilan** atas permintaan Master ("saya butuh chatnya aja").
+>
+> **Mesinnya tidak dibuang.** Semua properti itu (`TeksIkatan`, `TeksXp`,
+> `Kemajuan`, `TeksGpu`, `TeksTts`, `TeksNeuro`, `StatusTombol`, …) masih ada
+> dan masih dihitung di `CompanionViewModel`; yang hilang hanya XAML-nya.
+> Jadi mengembalikan panel = menulis ulang `ConsoleView.xaml`, tanpa satu pun
+> perubahan C#. **Jangan** menyimpulkan properti itu mati lalu menghapusnya.
+>
+> `AdaHealthError` ada khusus untuk banner itu — `HealthError` diisi tetapi
+> tidak punya penampil mana pun sebelum ini, sehingga setiap kegagalan runtime
+> menjadi tak terlihat persis setelah panel status dibuang.
+>
+> Handler `OnNeuroDiklik` **sudah dihapus** bersama tombolnya. Mode otonom tetap
+> hidup di `CompanionViewModel.AutonomousMode`; kalau tombolnya perlu lagi,
+> pakai `Command="{Binding PancingObrolanCommand}"` — tanpa handler baru.
 
 **`native/SilverWolf.Live2D`** — `Live2DStage.cpp` (±1600 baris, inti renderer),
 `Live2DStage.h` (API C), `build-cli.sh`, `rva-lookup.py`.
@@ -248,8 +294,8 @@ TAHAP: live2d: panggung 1 aktif pada percobaan 1
 TAHAP: [live2d] [swl2d] efek: kedip aktif, 2 parameter
 TAHAP: [live2d] [swl2d] efek: napas aktif
 TAHAP: [live2d] [swl2d] efek: pandangan aktif (dengan peredaman CubismTargetPoint)
-TAHAP: [live2d] [swl2d] kanvas model = 0.6 x 0.4, perbesaran=0.88, geser=(-0.10,0.10)
-TAHAP: [live2d] [swl2d] periksa piksel (bingkai ke-10): 511x661, terisi=108631, kotak=(38,154)-(510,548)
+TAHAP: [live2d] [swl2d] kanvas model = 0.6 x 0.4, perbesaran=0.70, geser=(-0.20,0.30)
+TAHAP: [live2d] [swl2d] periksa piksel (bingkai ke-10): 641x851, terisi=113893, kotak=(46,151)-(543,555)
 ```
 
 ---
@@ -577,17 +623,78 @@ apa adanya**:
 Akibatnya pada 1.85 hanya ~54% tinggi model yang masuk panel, dan bagian tengah
 yang terlihat kebetulan kepala.
 
-**Nilai akhir (dipilih dari pengukuran):**
+**Nilai akhir (dipilih dari pengukuran) — diperbarui 2026-10-09 sore:**
 
-| Perbesaran | Piksel terisi | Kotak | Ujung sayap terpotong |
+Kanvas model = **0.6 x 0.4 (aspek 1.5:1, lebar)**, terukur di `crash.log`.
+Karena panelnya potret, mengisi tinggi membuat **lebar meluap** — inilah sebab
+kepala naik keluar atas dan sayap keluar kanan.
+
+| Perbesaran | GeserX | JangkarY | Hasil |
 |---|---|---|---|
-| 1.85 (lama) | 270.523 | (0,32)-(510,660) | ya, parah (kepala saja) |
-| 1.00 | 129.627 | (47,129)-(510,575) | 90 piksel di tepi kanan |
-| **0.88 + geser −0.10** | **103.565** | **(39,155)-(510,547)** | **12 piksel** |
-| 0.75 | 75.268 | (99,170)-(510,504) | 3 piksel, tetapi model terlalu kecil |
+| 1.85 (warisan web) | — | — | hanya kepala+bahu |
+| 0.88 (lama) | −0.10 | 0.10 | kepala & sayap terpotong |
+| 0.48 | −0.08 | 0.24 | semua muat tapi **kekecilan** (33% tinggi) |
+| 0.80 | −0.04 | 0.30 | sayap menempel tepi (sisa 1 px) |
+| 0.78 | −0.14 | 0.30 | masih terpotong saat diukur dari tangkapan layar |
+| **0.70** | **−0.20** | **0.30** | **final — dua sisi lega, dikonfirmasi dua kali jalan** |
 
-`GeserX = -0.10` perlu karena seni model ini **tidak simetris** — sayap
-mekaniknya jauh lebih panjang ke kanan.
+**Konfirmasi 0.70 dari dua jalan berbeda** (2026-10-09 lanjutan):
+
+| Jalan | kotak di `crash.log` | margin kiri | margin kanan |
+|---|---|---|---|
+| Probe 00:39 | (46,151)-(543,555) | 46 px | 98 px |
+| Probe 01:xx | (45,153)-(532,555) | 45 px | **109 px** |
+
+Kedua jalan cocok satu sama lain (selisih < 2 px), dan **tidak ada clamp**
+(`x0` = 45/46, bukan 0). Sebelumnya di 0.78 sisi kanan hanya punya **1 px**
+ruang — sekarang **~100 px**. Sayap tidak lagi menempel tepi.
+
+> Catatan jujur: nilai di tabel ini berasal dari **probe** `crash.log`, yang
+> menurut peringatan di bawah **bukan** yang dilihat mata. Konfirmasi visual
+> terakhir tetap milik Master, karena tangkapan jendela tidak mungkin dari sesi
+> otomatis. Kalau masih ada bagian yang terpotong, kirim tangkapan layar — angka
+> `Perbesaran`/`GeserX`/`JangkarY` tinggal disetel lagi dengan aritmetika yang
+> sama.
+
+> ### ⚠️ Probe piksel ≠ yang dilihat mata — ukur tangkapan layar
+>
+> Pada posisi 0.78/−0.14, dua pengukuran berbeda jauh:
+>
+> | Metode | Bbox | Margin kiri | Margin kanan |
+> |---|---|---|---|
+> | Probe `crash.log` | (50,135)-(603,584) di bingkai 641 | 50 px | 38 px |
+> | **PIL pada tangkapan Master** | (147,221)-(671,872) di panel 672 | **147 px** | **1 px (terpotong)** |
+>
+> Selisih ~97 px. Probe mengukur bounding box quad/alpha, **bukan** piksel yang
+> benar-benar terlihat. **Untuk keputusan visual, ukur tangkapan layar Master
+> dengan PIL** (`tools/potret-jendela.py` atau analisis bbox manual).
+
+**Aritmetika yang mengunci nilai 0.70.** Pada tangkapan Master, karakter
+mengisi **524 px dari panel 672 px** (0.78). Artinya hanya ~88 px render tersisa
+untuk **dua** margin — mustahil memenuhi permintaan "geser ~80 px ke kiri
+sambil semua badan + sayap tetap kelihatan": salah satu sisi pasti terpotong.
+Dengan 0.70 lebar turun ke ~496 px sehingga sisa ~145 px, dan geser bisa
+dilakukan dengan aman.
+
+`GeserX = -0.20` perlu karena seni model ini **tidak simetris** — sayap
+mekaniknya jauh lebih panjang ke kanan, jadi pusat massa gambarnya selalu
+bergeser ke kanan walaupun modelnya "di tengah".
+`JangkarY = 0.30` mengangkat model agar ruang terisi lebih merata
+(permintaan Master: "naikin ke atas badannya").
+
+**Jebakan: probe di-CLAMP di `x0=0`.** `x0` tidak pernah dilaporkan negatif,
+jadi `x0=0` **bukan** berarti "margin kiri nol" melainkan "kehabisan ruang
+lapor". Akibatnya lebar kotak menipu (terlihat menyusut 553→552→535→527
+padahal lebar karakter konstan). **Baca `x1` saja (tidak di-clamp), lalu
+hitung `x0 = x1 - lebar_asli`.**
+
+**Cara memverifikasi tanpa melihat layar** — probe di `crash.log` tiap 10 bingkai:
+```
+TAHAP: [live2d] [swl2d] periksa piksel (bingkai ke-10): 641x851, terisi=..., kotak=(x0,y0)-(x1,y1)
+```
+Bingkainya 641x851. **Uji cepat tanpa build ulang:**
+`SWL2D_PERBESARAN`, `SWL2D_GESER_X`, `SWL2D_JANGKAR_Y`.
+Bukti: `tools/bukti/framing-070-geser-020.log`.
 
 ### 7.16 Ketajaman: buffer sudah 1:1, tekstur kini punya mipmap
 
@@ -733,6 +840,37 @@ kebagian.
 ⚠️ **Belum diverifikasi secara interaktif.** Lihat §9 — input sintetis tidak
 sampai ke aplikasi di lingkungan ini.
 
+### 7.22 Arah pandang kursor terbalik (kepala menunduk saat kursor di atas)
+
+Gejala yang dilaporkan Master: kursor di atas kepala → kepala **menunduk**;
+kursor di bawah → kepala **mendongak**. Persis kebalikan.
+
+**Sebabnya dua sistem koordinat yang berlawanan arah sumbu Y:**
+
+| Sistem | Arah Y positif | Akibat |
+|---|---|---|
+| Layar (WinUI) | ke **BAWAH** | kursor di atas kepala → `titik.Y - wajahY` **negatif** |
+| Cubism `ParamAngleY` | ke **ATAS** | nilai positif = kepala menoleh naik |
+
+Framework mendaftarkan parameter itu di `Live2DStage.cpp` (~baris 712) sebagai
+`LookParameterData(ParamAngleY, 0.0f, 30.0f)` — basis 0, puncak +30 untuk
+masukan positif. Jadi Y layar yang negatif diteruskan apa adanya ke
+`CubismLook::UpdateParameters` dan berubah arti menjadi "menunduk".
+
+**Perbaikan** di `StageView.xaml.cs`, `OnPanggungPointerBergerak`:
+
+```csharp
+var x = Jepit((titik.X - wajahX) / rentangX);     // X TIDAK dibalik
+var y = Jepit(-(titik.Y - wajahY) / rentangY);    // Y DIBALIK — layar ke bawah
+```
+
+Sumbu X tidak dibalik karena kiri/kanan sama arahnya di kedua sistem. Titik
+wajah ada di `TitikWajahY = 0.46f` (tinggi panel) dan tetap netral di kedua
+versi.
+
+**Cara memeriksa kalau gejala ini muncul lagi:** hitung tanda `y` untuk kursor di
+`titik.Y = 0` (atas). Harus **positif**. Kalau negatif, pembalikannya hilang.
+
 ---
 
 ## 8. Cacat terbuka & sisa pekerjaan
@@ -779,35 +917,172 @@ lihat catatan di bawah.
 > **Tanda crash yang sebenarnya:** log berakhir pada baris `[llama] ...`
 > **tanpa** entri exception sesudahnya.
 
-**Sebab.** Belum dipastikan. Dugaan terkuat tetap **fail-fast di tingkat driver
-GPU** — rebutan antara perangkat D3D11 kita dan konteks Vulkan llama-server
-(`VTUBER_VULKAN_NGL=99`, `VTUBER_VULKAN_CTX=16384`, KV cache f16).
+#### Pembaruan 2026-10-08 (sore) — dua asumsi lama terbukti SALAH
+
+Diukur ulang dengan `tools/uji-kematian.py` (mencatat **exit code utuh 32 bit**
+dan memori bebas; versi bash sebelumnya cuma mengembalikan 8 bit bawah sehingga
+`0xC0000602` terbaca sebagai `2`). Hasilnya menumbangkan dua kesimpulan lama:
+
+| Asumsi lama | Kenyataan |
+|---|---|
+| "fail-fast senyap di tingkat driver" | **Exit code-nya `0` — keluar bersih.** Bukan fail-fast, bukan exception, bukan `DisposeAsync`. Tidak ada satu pun entri Event Log pada menit kematian (diperiksa Application + System, hanya ada id 16394 SPP yang tak terkait) |
+| "rebutan driver GPU antara D3D11 dan Vulkan llama-server" | **Salah.** Dengan `VTUBER_VULKAN_NGL=0` (nol layer di GPU, llama murni CPU) aplikasi **tetap mati 2 dari 6 jalan**. Dan pada satu kematian, `llama-server` **tidak pernah menyala sama sekali** (nol baris `[llama]`, memori bebas masih 3,3 GB) — jadi llama bukan penyebab, bukan pemicu, dan tidak perlu ada |
+
+**Fakta perangkat keras yang selama ini tidak tercatat** (dan menjelaskan banyak
+hal): GPU-nya **Intel Iris Xe Graphics — grafis terintegrasi yang memakai RAM
+sistem sebagai VRAM**. RAM total 16 GB, dan **hanya ~3,7 GB bebas saat idle**.
+
+**Titik matinya selalu sama.** Log berhenti tepat setelah kedua berkas
+`FrameworkShaders/*.fx` dibaca di dalam `sebelum GetDeviceInfo` — yaitu di
+dalam `CubismShader_D3D11::GenerateShaders`. Ukuran `crash.log` pada titik itu
+selalu **13.449 bita**.
+
+**Kompilasi shader Cubism memakan ~17 detik di GPU ini.** Terukur pada jalan
+yang selamat: `crash.log` membeku di 13.449 bita dari detik ke-3 sampai
+detik ke-17, lalu melonjak ke 31.173 bita dan memori proses naik 184 MB →
+1,27 GB (tekstur + rantai mip termuat). Jadi jendela 13–19 detik itu adalah
+kompilasi shader, dan **kematian selalu terjadi di dalam jendela itu**.
+
+**Dua mode kematian yang berbeda** — **kini diperbarui menjadi TIGA** (lihat
+pembaruan 2026-10-09 di bawah, Mode C) — jangan disatukan:
+
+| Mode | Ciri | Dugaan sebab |
+|---|---|---|
+| **A — macet di kompilasi shader** | mati ~16 dtk, `crash.log` 13.449 bita, llama boleh jadi belum menyala sama sekali | kompilasi ~70 shader D3D pada Intel Iris Xe; exit 0 menunjukkan proses diakhiri, bukanmeledak |
+| **B — memori habis** | mati ~28 dtk, memori bebas menyentuh **3 MiB**, llama-server ikut mati | model 5,1 GB + KV cache f16 ctx 16.384 pada mesin yang hanya punya ~3,7 GB bebas |
+| **C — saat Vulkan mulai inferensi** | llama sudah `listening`, lalu mati persis di `launch_slot_: processing task`; tidak butuh kirim pesan (mati juga di `listening` saja) | rebutan driver Intel (D3D11 Cubism vs Vulkan llama) **kembali menguat** untuk mode ini |
+
+Mode B punya perbaikan yang jelas dan **harus dikerjakan tanpa menunggu Mode A**:
+`VTUBER_VULKAN_CTX=16384` itu **empat kali lipat** dari
+`VTUBER_LOCAL_MODEL_CTX=4096` yang sebenarnya dipakai — murni pemborosan
+(~2,3 GB KV cache f16) tanpa manfaat apa pun.
+
+**Sebab pasti Mode A** belum dipastikan. Yang sudah disingkirkan: fail-fast,
+exception, penutupan jendela, kehabisan memori, dan llama-server. Penanda
+`AppDomain.ProcessExit` sudah dipasang di `CrashLog.Pasang()` — kalau baris
+`PROSES KELUAR` muncul di ujung log, berarti proses diakhiri dari dalam
+CLR (`Environment.Exit`/`Main` kembali); kalau tidak muncul, berarti
+`TerminateProcess` dari luar (driver atau OS). Itu pembedanya.
 
 **Dampak.** Cacat paling serius yang tersisa: fungsi utama (mengobrol dengan LLM
 lokal) tidak andal, dan jendela menutup tanpa penjelasan apa pun.
 
 **Langkah berikutnya (urut dari yang paling murah):**
 
-1. **Kurangi tekanan VRAM lewat `.env`, satu perubahan per uji** (jangan
-   mengubah beberapa sekaligus, atau tidak akan ketahuan mana yang bekerja):
-   - `VTUBER_VULKAN_CACHE_TYPE` `f16` → `q8_0` (KV cache jadi separuh)
-   - `VTUBER_VULKAN_CTX` `16384` → `8192`
-   - `VTUBER_VULKAN_NGL` `99` → `20`–`30`
-   - `VTUBER_VULKAN_MUAT_BOOT` `ya` → `tidak` — supaya pemuatan LLM tidak
-     berbarengan dengan pembuatan perangkat D3D11 Live2D. Saat ini keduanya
-     memang overlap by design: `CompanionRuntime.StartAsync` memuat llama lewat
-     `Task.Run` sementara `StageView` membuat panggung di waktu yang sama.
-2. **Serialkan inisialisasi** kalau langkah 1 menguatkan dugaan GPU: tunda
-   pemuatan llama sampai panggung Live2D melaporkan `panggung dibuat`, atau
-   sebaliknya.
-3. **Kumpulkan sampel** dengan loop uji §9 sambil menyimpan `crash.log` tiap
-   kematian, lalu saring dengan tabel di §8.1.
+1. ✅ **`VTUBER_VULKAN_CTX` `16384` → `4096`** — bukan sekadar penghematan:
+   nilai itu **empat kali lipat** dari `VTUBER_LOCAL_MODEL_CTX=4096` yang
+   benar-benar dipakai prompt. Menutup Mode B. **Dikerjakan 2026-10-09.**
+   Sekaligus `VTUBER_VULKAN_NGL` `0` → `40`: nilai `0` adalah sisa eksperimen
+   dan **tidak** menghemat memori (model 5,1 GB lalu dihitung di RAM murni,
+   bukan memori bersama GPU) — ia hanya membebani CPU.
+2. **Tahu dulu siapa yang mengakhiri proses** (Mode A). Penanda
+   `PROSES KELUAR` sudah terpasang; tangkap satu kematian dan lihat ada tidaknya
+   baris itu di ujung `crash.log`. Tanpa ini semua perbaikan berikutnya hanya
+   terkaan.
+3. Kalau ternyata `TerminateProcess` dari luar, curigai driver Intel: uji
+   `D3D11_CREATE_DEVICE_SINGLETHREADED`, atau pindahkan
+   `swl2d_stage_create` ke utas kerja ber-stack besar supaya kompilasi 17 detik
+   itu tidak memblokir utas UI.
+4. **Serialkan inisialisasi** — tunda pemuatan llama sampai panggung Live2D
+   melaporkan `panggung N aktif`. Ini tidak menyembuhkan Mode A (terbukti: mati
+   pun terjadi saat llama belum menyala), tetapi menghilangkan tumpang tindih
+   pemuatan 5 GB dengan kompilasi shader, yang jelas tidak menolong.
 
 **Definisi selesai:** 10 kali jalan berturut-turut bertahan ≥2 menit dengan
 Live2D aktif **dan** llama memuat model, tanpa exception di `crash.log`.
 
-**Definisi selesai:** 10 kali jalan berturut-turut bertahan ≥2 menit dengan
-Live2D aktif **dan** llama memuat model, tanpa exception di `crash.log`.
+#### Pembaruan 2026-10-09 — klasifikasi ulang `jalan-1..9`, Mode C ditemukan
+
+Menghitung ulang sembilan log di `tools/bukti/` dengan penanda `PROSES KELUAR`
+(sebelumnya tidak dipakai karena belum ada) menghasilkan gambaran yang jauh
+berbeda dari `ringkasan-uji.txt`. **Baris "selamat=4 mati=5" itu keliru**: lima
+"kematian" tersebut semuanya **jendela ditutup** — `shutdown: selesai` diikuti
+`PROSES KELUAR`, yang artinya jalur normal `MainWindow.OnClosed`.
+
+| Jalan | Penanda akhir | Arti |
+|---|---|---|
+| 1,2,3,4,5,8,9 | `shutdown: selesai` → `PROSES KELUAR` | jendela DITUTUP — bukan crash |
+| **6** | berhenti di `listening on http://127.0.0.1:8788` | **MATI di ambang inferensi** (hidup 25 dtk) |
+| **7** | berhenti di `slot launch_slot_: task 0 processing task` | **MATI saat token pertama** (hidup 56 dtk) |
+
+**Jalan 7 mereproduksi keluhan asli Master** ("dikirim, tidak ada balasan apa pun"):
+
+```
+02:32:47.050  TAHAP: composer: Enter, panjang draf=4, bisaKirim=True
+02:32:47.145  [llama] slot get_availabl: id 0 | task -1 | selected slot by LRU
+02:32:47.145  [llama] slot launch_slot_: id 0 | task 0 | processing task
+   (log putus — tanpa balasan, tanpa PROSES KELUAR)
+```
+
+Proses lenyap di **milidetik** yang sama ketika slot inferensi mulai memproses.
+Ini bukan hang dan bukan timeout: benar-benar berhenti. Jalan 6 menunjukkan hal
+penting lain — ia mati **36 detik hidup, llama `listening`, tanpa satu pun baris
+`composer`** — jadi kematian tidak memerlukan kirim pesan, tetapi **pemicu
+terkuatnya adalah saat Vulkan mulai menghitung.**
+
+**Konsekuensi untuk diagnosis lama.** Kesimpulan "bukan rebutan GPU" yang
+diambil dari uji `-ngl 0` tetap benar **untuk Mode A/B**, tetapi Mode C justru
+memberi bukti sebaliknya: mati tepat ketika Vulkan aktif bekerja. Jadi jangan
+generalisasi — ketiga mode punya pemicu sendiri.
+
+**Langkah berikutnya (paling murah dulu), untuk Mode C:**
+
+1. **Uji silang sekali**: jalankan aplikasi dengan panggung Live2D dimatikan
+   (llama hidup sendiri), lalu sebaliknya (Live2D hidup, llama jangan dimuat).
+   - Kalau C hilang saat Live2D mati → rebutan driver terbukti → kerjakan
+     langkah serial (poin 4 di daftar atas).
+   - Kalau C tetap ada saat Live2D mati → penyebabnya di llama/Vulkan sendiri,
+     dan `VTUBER_VULKAN_CTX`/`NGL` yang harus dikecilkan lebih agresif.
+2. Pastikan `CrashLog` tetap dipanggil di jalur shutdown **sebelum** proses
+   benar-benar berhenti, supaya kematian Mode C pun bisa dibedakan dari
+   penutupan jendela tanpa harus menebak.
+
+#### Pembaruan 2026-10-09 (lanjutan) — Mode A terbukti INTERMITEN
+
+Menjalankan biner yang **sama persis** empat kali berturut-turut dari folder
+keluaran x64 memberi hasil yang berbeda-beda:
+
+| Jalan | Ukuran `crash.log` | Proses | Probe piksel |
+|---|---|---|---|
+| 1 | **13.449 bita** | MATI | tidak ada |
+| 2 | 31.872 bita | HIDUP | belum sampai |
+| 3 | 34.669 bita | HIDUP | **ADA** |
+| 4 | 34.xxx bita | HIDUP | **ADA** |
+
+**Ini temuan terpenting tentang Mode A sejauh ini: bukan data rusak, melainkan
+race condition.** Dugaan lama "shader `.fx` korup" **terbantah** — berkasnya
+lengkap dan valid (`CubismEffect.fx` 5.389 bita / 154 baris;
+`CubismBlendMode.fx` 16.611 bita / 524 baris; seluruh blok kurung tutup utuh).
+Kalau datanya rusak, semua jalan akan mati, bukan sebagian.
+
+Titik mati yang tepat (`tools/bukti/mode-A-13449-2026-10-09.log`):
+
+```
+TAHAP: [live2d] [swl2d] probe2: D3DCompile(VertCopy) -> 0x00000000   ← SUKSES
+TAHAP: [live2d] [swl2d] sebelum GetDeviceInfo
+TAHAP: [live2d] [swl2d] MuatBerkas dipanggil: FrameworkShaders/CubismEffect.fx
+TAHAP: [live2d] [swl2d] MuatBerkas dipanggil: FrameworkShaders/CubismBlendMode.fx
+   (log putus di sini — 13.449 bita, tanpa PROSES KELUAR)
+```
+
+`D3DCompile(VertCopy)` sudah mengembalikan `0x00000000` (sukses) sebelum mati,
+jadi kompilasi D3D sendiri **sehat**. Kematian terjadi saat penyerahan isi
+berkas ke runtime Cubism — bukan saat kompilasi.
+
+**DLL native sudah dicocokkan dan bukan penyebabnya:**
+`SilverWolf.Live2D.dll` di folder jalan = `ba295d6190cad0730d07ec8b95ef133c`,
+**identik** dengan `native/SilverWolf.Live2D/build/x64/Debug/`.
+
+**Konsekuensi untuk strategi perbaikan:** karena Mode A intermiten, satu
+keberhasilan **tidak** membuktikan perbaikan, dan satu kegagalan **tidak**
+membuktikan kerusakan. Setiap perubahan pada jalur ini wajib diuji **minimal 5
+kali jalan** dan dilaporkan sebagai rasio (mis. "lolos 4/5"), bukan "berhasil".
+
+**Bukti tersimpan:**
+- `tools/bukti/mode-A-13449-2026-10-09.log` — jalan yang MATI.
+- `tools/bukti/mode-A-lolos-shader-2026-10-09.log` — jalan yang LOLOS; memuat
+  `tts: siap (rantai=piper+rvc,piper, rvc=True)`, bukti bahwa pipeline suara
+  (M11) benar-benar terbangun di dalam aplikasi nyata.
 
 ### 8.2 🟡 LipSync belum ada
 
@@ -855,10 +1130,16 @@ sendiri, sehingga phonemizer tidak perlu dibangun ulang dan `piper_phonemize.was
 tidak dibutuhkan sama sekali. Uji paritas phonemizer tetap *boleh* dilakukan
 kalau dianggap berguna, tetapi **bukan penghambat** apa pun.
 
-### 8.6 🟠 Status "memuat model" tidak dikenali — UI menampilkan OFFLINE
+### 8.6 ✅ SELESAI (2026-10-08) — Status "memuat model" tidak dikenali
 
-`OpenAiCompatibleProvider.AvailableAsync` (`Inference/OpenAiCompatibleProvider.cs`
-baris 65–74) mencari bentuk badan 503 seperti ini:
+~~UI menampilkan OFFLINE padahal model sedang dimuat.~~ **Sudah diperbaiki.**
+Pengenalan bentuk badannya dipindah ke `SilverWolf.Core/Inference/HealthProbe.cs`
+supaya bisa dikunci unit test (`tests/.../HealthProbeTests.cs`, 6 uji). Total uji
+kini **114** (dulu 108).
+
+Masalah aslinya — `OpenAiCompatibleProvider.AvailableAsync`
+(`Inference/OpenAiCompatibleProvider.cs` baris 65–74) mencari bentuk badan 503
+seperti ini:
 
 ```csharp
 b.TryGetProperty("status", out var status) && status.GetString() == "loading model"
@@ -879,8 +1160,14 @@ model sedang dimuat. Nilai yang benar: `"memuat"` / `"MEMUAT VULKAN…"`.
 hanya perlu menunggu. Ini juga memperburuk §8.1 karena kematian sering terjadi
 tepat pada fase pemuatan yang salah dilaporkan ini.
 
-**Perbaikan.** Kenali juga bentuk `error.message == "Loading model"`, atau
-perlakukan setiap 503 dari llama-server sebagai `Loading = true`.
+**Perbaikan.** `HealthProbe.MenandakanSedangMemuat(status, badan)` kini
+mengenali `error.message` **dan** bentuk lama `status`, tanpa peduli besar-kecil
+huruf. Ia sengaja mensyaratkan **503** dan menolak badan kosong/bukan JSON,
+supaya kegagalan nyata tidak tersamar menjadi "memuat". Nilai yang dikembalikan
+`Reason = "memuat model ke VRAM..."` → `StatusTeks = "memuat"`.
+
+⚠️ **Belum diverifikasi terhadap llama-server sungguhan** — baru dikunci unit
+test. Perlu satu jalan nyata yang menunjukkan "MEMUAT VULKAN…" di UI.
 
 ### Sisa pekerjaan, urut disarankan
 
@@ -911,6 +1198,8 @@ perlakukan setiap 503 dari llama-server sebagai `Loading = true`.
 | `SWL2D_DIAG=1` | variabel lingkungan | Penangkap pengecualian + pembuang 32 alamat tumpukan. **Jangan diaktifkan bawaan** |
 | `SWL2D_NOLOG=1` | variabel lingkungan | Log native murni ke `swl2d-native.log`, melewati .NET |
 | `rva-lookup.py` | `python native/SilverWolf.Live2D/rva-lookup.py build/x64/Release/SilverWolf.Live2D.map 0x5E4D1` | RVA → nama fungsi |
+| **`tools/uji-kematian.py`** | `python tools/uji-kematian.py [n] [detik]` | Loop uji kematian §8.1. **Mencatat exit code utuh 32 bit** (versi bash hilang 24 bit atas sehingga `0xC0000602` terbaca `2`), memori bebas terendah, dan nasib llama-server |
+| **`tools/probe-keluar.py`** | `python tools/probe-keluar.py [detik]` | Satu jalan dengan garis waktu: status `Running`/`Not Responding`, ukuran `crash.log` tiap 2 dtk, exit code, dan selisih antara tulisan log terakhir dengan keluarnya proses |
 | `tools/potret-jendela.py` | `python tools/potret-jendela.py keluar.png "Silver Wolf"` | Pemotret jendela lewat `PrintWindow` — **tetap bekerja walau jendela tertutup jendela lain**. Wajib `SetProcessDpiAwarenessContext` lebih dulu |
 | `CrashLog.Tulis` | `Diagnostics/CrashLog.cs` | `File.AppendAllText` — **tidak buffered**, jadi baris terakhir di `crash.log` benar-benar langkah terakhir yang dijalankan |
 

@@ -55,6 +55,10 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
     private DispatcherQueueTimer? _timerHealth;
     private DispatcherQueueTimer? _timerProaktif;
     private CancellationTokenSource _cts = new();
+    private SilverWolf.Services.Tts.TtsPipeline? _tts;
+    private float _levelSuara;
+    private string? _alasanSuaraHening;
+    private long _versiSuara;
 
     /// <summary>
     /// Dinyalakan begitu pembongkaran dimulai.
@@ -87,7 +91,11 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
     public CompanionViewModel()
     {
-        _mirrorTrack = BacaMirror();
+        // _mirrorTrack TIDAK dibaca di sini. Konstruktor ini berjalan di jalur
+        // MainWindow → Activate(); membaca JSON dari disk secara sinkron di UI
+        // thread menahan aktivasi tanpa alasan. Pembacaan dipindah ke
+        // InisialisasiAsync (lihat BacaMirror di sana). Nilai awal false sampai
+        // pengaturan tersimpan dibaca; bawaan pengaturan sebenarnya true.
 
         // canExecute harus berupa delegasi — BisaKirim/BisaPicu adalah properti,
         // jadi dilewatkan sebagai lambda agar nilainya dievaluasi setiap kali.
@@ -123,8 +131,29 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
     public string? HealthError
     {
         get => _healthError;
-        private set => SetProperty(ref _healthError, value);
+        private set
+        {
+            // AdaHealthError diturunkan dari HealthError. Tanpa pemberitahuan
+            // manual ini, banner galat tidak pernah muncul walau nilainya
+            // berubah — SetProperty hanya memberitakan "HealthError".
+            if (SetProperty(ref _healthError, value))
+            {
+                OnPropertyChanged(nameof(AdaHealthError));
+            }
+        }
     }
+
+    /// <summary>
+    /// Harus ditampilkan atau tidak. Dipakai XAML lewat pengikatan langsung —
+    /// WinUI 3 sudah punya konversi bool -> Visibility bawaan, jadi tidak perlu
+    /// konverter khusus dan tidak boleh ada <c>Visibility</c> yang dipaksa.
+    ///
+    /// Kenapa ini ada: sebelum 2026-10-08, <c>HealthError</c> diisi tetapi
+    /// **tidak ada satu pun elemen XAML yang menampilkannya** setelah panel HUD
+    /// dibuang. Kegagalan runtime jadi tidak terlihat sama sekali — pengguna
+    /// hanya melihat chat yang tidak pernah menjawab, tanpa tahu sebabnya.
+    /// </summary>
+    public bool AdaHealthError => !string.IsNullOrWhiteSpace(HealthError);
 
     public bool IsSending
     {
@@ -145,14 +174,49 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>
     /// Dipakai pekerja proaktif sebagai salah satu syarat lewati, padanan
-    /// <c>audioBusy</c>. M11 yang akan mengisinya; M9 hanya menyediakan
-    /// tempatnya supaya logika proaktif tidak perlu diubah lagi nanti.
+    /// <c>audioBusy</c>. Diisi oleh <see cref="Tts"/> selama suara diputar —
+    /// sebelum ini properti ini ada tetapi <b>tidak pernah diisi</b>, sehingga
+    /// obrolan proaktif bisa berbicara di tengah kalimat yang sedang diucapkan.
     /// </summary>
     public bool SuaraSibuk
     {
         get => _suaraSibuk;
         set => SetProperty(ref _suaraSibuk, value);
     }
+
+    /// <summary>
+    /// Rantai suara (Piper → RVC) + pemutarannya. <c>null</c> kalau TTS mati
+    /// atau konfigurasinya belum siap — dalam hal itu <see cref="TeksTts"/>
+    /// memberi tahu alasannya, bukan diam.
+    /// </summary>
+    public SilverWolf.Services.Tts.TtsPipeline? Tts => _tts;
+
+    /// <summary>
+    /// Level amplitudo suara 0..1 yang sedang diputar, dipakai LipSync supaya
+    /// mulut bergerak mengikuti suara nyata.
+    /// </summary>
+    public float LevelSuara
+    {
+        get => _levelSuara;
+        private set => SetProperty(ref _levelSuara, value);
+    }
+
+    /// <summary>Alasan suara tidak keluar; <c>null</c> kalau tidak ada masalah.</summary>
+    public string? AlasanSuaraHening
+    {
+        get => _alasanSuaraHening;
+        private set
+        {
+            if (SetProperty(ref _alasanSuaraHening, value))
+            {
+                OnPropertyChanged(nameof(AdaMasalahSuara));
+                OnPropertyChanged(nameof(TeksTts));
+            }
+        }
+    }
+
+    /// <summary>Padanan <see cref="AdaHealthError"/> untuk jalur suara.</summary>
+    public bool AdaMasalahSuara => !string.IsNullOrWhiteSpace(AlasanSuaraHening);
 
     /// <summary>Tag emosi apa adanya, bahasa Indonesia (mis. "senyum", "goda").</summary>
     public string Expression
@@ -233,13 +297,33 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
     public string TeksMirror => MirrorTrack ? "MIRROR ON" : "MIRROR OFF";
 
-    public string TeksKirim => IsSending ? "MENGALIRKAN…" : "KIRIM";
+    public string TeksKirim => IsSending ? "MENYIAPKAN…" : "KIRIM";
 
     public string TeksGpu => _health?.Model ?? "-";
 
     public string TeksMemori => _health?.Memori ?? "memori tidak tersedia";
 
-    public string TeksTts => _health?.Tts ?? "siap";
+    /// <summary>
+    /// Keadaan rantai suara sebenarnya.
+    ///
+    /// Dulu properti ini hanya meneruskan <c>_health?.Tts</c> dan jatuh ke
+    /// "siap" kalau kosong — jadi rantai suara yang MATI tampil sama persis
+    /// dengan yang HIDUP, dan satu-satunya gejalanya adalah "dia tidak
+    /// menjawab". Sekarang urutannya: masalah nyata dari pipeline suara dulu
+    /// (paling penting), lalu laporan health, baru terakhir "siap".
+    /// </summary>
+    public string TeksTts
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(_alasanSuaraHening))
+            {
+                return _alasanSuaraHening!;
+            }
+
+            return _health?.Tts ?? "siap";
+        }
+    }
 
     public string TeksIkatan =>
         _kizuna is null ? "Lv.1 —" : $"Lv.{_kizuna.Level} {_kizuna.StageName} — {_kizuna.StageLabel}";
@@ -286,24 +370,92 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
+            // Baca di latar tanpa menulis ulang JSON lewat setter MirrorTrack.
+            var mirror = await Task.Run(BacaMirror);
+            if (_sedangDibuang) return;
+            if (SetProperty(ref _mirrorTrack, mirror, nameof(MirrorTrack)))
+                OnPropertyChanged(nameof(TeksMirror));
             CrashLog.Tahap("runtime: StartAsync mulai");
 
-            _runtime = await CompanionRuntime.StartAsync(
+            var runtime = await CompanionRuntime.StartAsync(
                 log: pesan => CrashLog.Tahap($"runtime: {pesan}"),
-                onError: galat => CrashLog.Tulis("runtime", galat));
-
+                onError: galat => CrashLog.Tulis("runtime", galat),
+                ct: _cts.Token);
+            if (_sedangDibuang)
+            {
+                await runtime.DisposeAsync();
+                return;
+            }
+            _runtime = runtime;
             _backend = _runtime.Backend;
             CrashLog.Tahap("runtime: siap");
+
+            SiapkanTts(_runtime);
 
             await SegarkanHealthAsync();
 
             MulaiTimer();
             CrashLog.Tahap("runtime: timer health + proaktif jalan");
         }
+        catch (OperationCanceledException) when (_sedangDibuang)
+        {
+            // Penutupan selama startup bukan galat runtime.
+        }
         catch (Exception galat)
         {
             CrashLog.Tulis("InisialisasiAsync", galat);
             HealthError = galat.Message;
+        }
+    }
+
+    /// <summary>
+    /// Bangun rantai suara dari konfigurasi runtime.
+    ///
+    /// <para>
+    /// <b>Inilah bagian yang hilang sampai 2026-10-09.</b> Sebelum ini tidak ada
+    /// satu pun kode yang memutar audio di seluruh proyek: NAudio dirujuk di
+    /// csproj sehingga DLL-nya ikut tersalin, tetapi tidak pernah dipanggil.
+    /// Akibatnya balasan masuk ke chat tanpa suara sama sekali — persis keluhan
+    /// "pesannya sudah jalan, TTS-nya tidak balas".
+    /// </para>
+    ///
+    /// <para>
+    /// Kegagalan di sini <b>tidak boleh</b> menjatuhkan inisialisasi: chat tetap
+    /// harus jalan walaupun suara tidak siap. Karena itu alasan kegagalannya
+    /// disimpan di <see cref="AlasanSuaraHening"/> untuk ditampilkan, bukan
+    /// dilempar sebagai exception.
+    /// </para>
+    /// </summary>
+    private void SiapkanTts(CompanionRuntime runtime)
+    {
+        try
+        {
+            var konfig = runtime.Konfig;
+            _tts = new SilverWolf.Services.Tts.TtsPipeline(
+                konfig,
+                pesan => CrashLog.Tahap($"tts: {pesan}"));
+
+            _tts.LevelBerubah += level =>
+            {
+                // Kejadian ini datang dari utas audio, bukan utas UI. Menyentuh
+                // state terikat XAML dari utas lain = crash senyap.
+                _dispatcher?.TryEnqueue(() =>
+                {
+                    if (!_sedangDibuang && SuaraSibuk) LevelSuara = level;
+                });
+            };
+
+            var alasan = _tts.AlasanTidakSiap();
+            AlasanSuaraHening = alasan;
+
+            CrashLog.Tahap(alasan is null
+                ? $"tts: siap (rantai={konfig.TtsRantai}, rvc={konfig.Rvc})"
+                : $"tts: TIDAK siap - {alasan}");
+        }
+        catch (Exception galat)
+        {
+            CrashLog.Tulis("SiapkanTts", galat);
+            AlasanSuaraHening = galat.Message;
         }
     }
 
@@ -366,7 +518,7 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
         Messages.Add(new ChatBubble { Role = "user", Content = isi });
 
-        var gelembung = new ChatBubble { Role = "assistant", Pending = true };
+        var gelembung = new ChatBubble { Role = "assistant", Pending = true, SedangMemuat = true };
         Messages.Add(gelembung);
 
         IsSending = true;
@@ -408,7 +560,7 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
         LastUserActivity = DateTimeOffset.Now;
 
-        var gelembung = new ChatBubble { Role = "assistant", Pending = true };
+        var gelembung = new ChatBubble { Role = "assistant", Pending = true, SedangMemuat = true };
         Messages.Add(gelembung);
 
         IsSending = true;
@@ -453,7 +605,7 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        var gelembung = new ChatBubble { Role = "assistant", Pending = true };
+        var gelembung = new ChatBubble { Role = "assistant", Pending = true, SedangMemuat = true };
         Messages.Add(gelembung);
 
         IsSending = true;
@@ -517,34 +669,116 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
     private async Task AlirkanAsync(IAsyncEnumerable<StreamChunk> body, ChatBubble gelembung)
     {
+        var ct = _cts.Token;
         var mentah = new StringBuilder();
-
-        await foreach (var potong in body)
+        gelembung.SedangMemuat = true;
+        gelembung.TeksMemuat = "sedang berpikir…";
+        // Balasan baru membatalkan ucapan lama sebelum mulai inferensi/produksi.
+        var versiSuara = ++_versiSuara;
+        _tts?.Hentikan();
+        SuaraSibuk = false;
+        LevelSuara = 0f;
+        var pantauSuara = false;
+        try
         {
-            if (potong.Err is { } galat)
+            // Buffer saja: tidak mengubah Content atau wajah pada setiap token.
+            await foreach (var potong in body.WithCancellation(ct))
             {
-                gelembung.Error = galat.Message;
-                gelembung.Pending = false;
+                ct.ThrowIfCancellationRequested();
+                if (potong.Err is { } galat)
+                {
+                    gelembung.Error = galat.Message;
+                    return;
+                }
+                mentah.Append(potong.Text ?? string.Empty);
+            }
+
+            ct.ThrowIfCancellationRequested();
+            var teks = EmotionParser.CleanEmotionTags(mentah.ToString());
+            if (string.IsNullOrWhiteSpace(teks))
+            {
+                gelembung.Error = "Model tidak menghasilkan balasan. Silakan coba lagi.";
                 return;
             }
 
-            mentah.Append(potong.Text ?? string.Empty);
-
-            var teks = mentah.ToString();
-
-            // Tag emosi dibuang dari yang ditampilkan, tetapi nilainya dipakai
-            // untuk menggerakkan ekspresi — persis seperti Konsol aplikasi lama.
-            gelembung.Content = EmotionParser.CleanEmotionTags(teks);
-
-            var emosi = EmotionParser.ExtractEmotion(teks).Emotion;
-            if (!string.IsNullOrWhiteSpace(emosi))
+            var tts = _tts;
+            if (SuaraAktif && tts is not null)
             {
-                Expression = emosi!.ToLowerInvariant();
+                gelembung.TeksMemuat = "sedang menyiapkan suara…";
+                SuaraSibuk = true;
+                try
+                {
+                    var siap = await tts.SiapkanDanPutarAsync(teks, ct);
+                    ct.ThrowIfCancellationRequested();
+                    if (siap)
+                    {
+                        AlasanSuaraHening = null;
+                        pantauSuara = true;
+                        // Snapshot tugas dan versi: penyelesaian lama tidak
+                        // boleh mereset state ucapan baru. Tidak memakai timeout
+                        // palsu lima menit untuk menandai ucapan sudah selesai.
+                        _ = PantauSuaraAsync(tts.Penyelesaian, versiSuara);
+                    }
+                    else
+                    {
+                        gelembung.CatatanSuara = "Suara tidak dapat dimulai; balasan ditampilkan sebagai teks.";
+                        AlasanSuaraHening = tts.AlasanTidakSiap() ?? "Tidak ada audio yang berhasil dimulai. Lihat crash.log.";
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception galat)
+                {
+                    CrashLog.Tulis("AlirkanAsync.SiapkanDanPutar", galat);
+                    gelembung.CatatanSuara = "Suara gagal disiapkan; balasan ditampilkan sebagai teks.";
+                    AlasanSuaraHening = galat.Message;
+                }
+            }
+            else if (SuaraAktif)
+            {
+                gelembung.CatatanSuara = "Suara belum siap; balasan ditampilkan sebagai teks.";
+            }
+
+            ct.ThrowIfCancellationRequested();
+            if (_sedangDibuang) return;
+            // Ekspresi dan chat tampil pada titik yang sama, setelah audio mulai
+            // atau setelah kegagalan TTS yang dijelaskan kepada pengguna.
+            var emosi = EmotionParser.ExtractEmotion(mentah.ToString()).Emotion;
+            if (!string.IsNullOrWhiteSpace(emosi)) Expression = emosi.ToLowerInvariant();
+            gelembung.Content = teks;
+        }
+        catch (OperationCanceledException)
+        {
+            gelembung.Error = "Balasan dibatalkan.";
+        }
+        finally
+        {
+            gelembung.Pending = false;
+            if (!pantauSuara && versiSuara == _versiSuara)
+            {
+                SuaraSibuk = false;
+                LevelSuara = 0f;
             }
         }
-
-        gelembung.Pending = false;
     }
+
+    private async Task PantauSuaraAsync(Task selesai, long versiSuara)
+    {
+        try { await selesai.ConfigureAwait(false); }
+        catch (Exception galat) { CrashLog.Tulis("PantauSuaraAsync", galat); }
+        finally
+        {
+            _dispatcher?.TryEnqueue(() =>
+            {
+                if (_sedangDibuang || versiSuara != _versiSuara) return;
+                SuaraSibuk = false;
+                LevelSuara = 0f;
+            });
+        }
+    }
+
 
     private List<ChatMessage> RiwayatUntukBackend()
     {
@@ -656,6 +890,30 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
         catch (ObjectDisposedException)
         {
             // sudah dibatalkan/dibuang sebelumnya
+        }
+
+        // TTS dibongkar SEBELUM runtime.
+        //
+        // Rantai TTS menjalankan proses Python (RVC memuat model ke memori dan
+        // hidup lama). Kalau tidak ditunggu, menutup jendela meninggalkan proses
+        // Python yatim yang menahan beberapa GB RAM — persis bahan bakar Mode B.
+        // Batas 3 detik dipakai supaya penutupan jendela tidak terasa menggantung;
+        // pembatalan diteruskan TtsWorker ke Kill(entireProcessTree: true).
+        // Dispose pipeline menunggu tugas berakhir sebelum melepas pemutar.
+        if (_tts is not null)
+        {
+            try
+            {
+                _tts.Hentikan();
+                await _tts.TungguSelesaiAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Penutupan tidak boleh gagal hanya karena suara masih sibuk.
+            }
+
+            _tts.Dispose();
+            _tts = null;
         }
 
         if (_runtime is not null)
