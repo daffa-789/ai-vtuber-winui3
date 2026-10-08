@@ -131,6 +131,9 @@ public class TimeToolTests
         var hasil = new AlatWaktu().Panggil(new DateTimeOffset(2026, 10, 9, 3, 4, 0, TimeSpan.FromHours(7)));
 
         Assert.Contains("belum tercatat", hasil, StringComparison.Ordinal);
+
+        // Baris ini disuntik tiap giliran — harus ada pengingat "sekali saja".
+        Assert.Contains("sekali saja", hasil, StringComparison.Ordinal);
     }
 
     [Fact]

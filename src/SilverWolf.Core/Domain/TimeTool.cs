@@ -77,7 +77,10 @@ public sealed class AlatWaktu : IAlat
     {
         if (_profil?.Lahir is not { } lahir)
         {
-            return "- Ulang tahun Master: belum tercatat. Tanyakan sekali dengan manis, lalu ingat baik-baik.";
+            // Baris ini disuntik tiap giliran, jadi harus tegas "sekali saja" —
+            // tanpa itu dia menanyakan tanggal lahir di setiap balasan.
+            return "- Ulang tahun Master: belum tercatat. Tanyakan sekali saja dengan manis, "
+                   + "lalu ingat baik-baik. Jangan ditanya berulang-ulang.";
         }
 
         var sisa = _profil.HariMenujuUlangTahun(hariIni);

@@ -4,6 +4,33 @@ Aplikasi desktop native Windows untuk **Silver Wolf**, pendamping AI/VTuber loka
 Ini adalah hasil migrasi dari `../AI Vtuber Web/` (Electron + Vue 3 + server Node)
 ke WinUI 3 dengan C#/.NET, XAML, dan pola MVVM.
 
+## ⚠️ Baca ini dulu kalau baru clone
+
+Repo ini **hanya berisi kode sumber**. Yang membuat aplikasinya bisa jalan justru
+**tidak ada di sini**, jadi clone saja tidak cukup:
+
+| Tidak ada di repo | Kenapa | Letaknya di mesin Anda |
+|---|---|---|
+| Model Live2D Silver Wolf | Lisensi Live2D melarang redistribusi sebagai berkas lepas | `assets/live2d/silverwolf/` |
+| Model LLM (GGUF) | Berukuran 4,8 GB | `model/` |
+| Model suara Piper & RVC | Berukuran besar, berlisensi sendiri-sendiri | `assets/piper/`, `assets/rvc/` |
+| Binary `llama-server` | 91 MB, hasil build Vulkan | `bin/llama/` |
+| Memori karakter | Data pribadi: persona, fakta, mood, riwayat | `silver_wolf_memory/` |
+| `.env` | Konfigurasi mesin lokal | akar repo |
+
+Semuanya sudah tercantum di `.gitignore` — bukan karena lupa di-commit. Isi
+`docs/PROYEK.md` §3 dan `AppPaths.Periksa()` menunjukkan jalur tepat yang
+diperiksa saat aplikasi menyala.
+
+Tanpa aset di atas, solusi **tetap bisa di-build** dan seluruh unit test tetap
+lolos (Core dan Services sengaja tidak bergantung Windows), tetapi aplikasinya
+akan berhenti dengan pesan aset belum lengkap.
+
+## Lisensi
+
+Kode sumber: **MIT** — lihat `LICENSE`. Yang dikecualikan (model, aset, font,
+karakter) tercantum di bagian akhir berkas `LICENSE`.
+
 ## Status migrasi saat ini
 
 > Tabel ini **ringkas saja**. Acuan lengkapnya `docs/PROYEK.md` §2 — kalau

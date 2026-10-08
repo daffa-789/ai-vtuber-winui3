@@ -1,0 +1,17 @@
+# Normalisasi akhir baris — tanpa ini Git sering mengeluh "LF will be replaced
+# by CRLF" pada hampir setiap berkas teks di mesin Windows.
+* text=auto
+
+# Berkas biner: jangan pernah disentuh konversi akhir baris, dan jangan
+# dibiarkan muncul sebagai diff teks.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.ico    binary
+*.ttf    binary
+*.otf    binary
+*.wav    binary
+*.mp3    binary
+*.moc3   binary
+*.gguf   binary
+*.onnx   binary
