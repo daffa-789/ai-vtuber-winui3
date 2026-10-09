@@ -333,6 +333,17 @@ public sealed partial class StageView : UserControl
             // diteruskan supaya tidak perlu diubah lagi nanti.
             Live2DNative.AturTampak(_panggung, Perbesaran, GeserX, JangkarY);
         }
+        else if (e.PropertyName == nameof(CompanionViewModel.LevelSuara))
+        {
+            // LipSync. Nilainya RMS audio nyata yang dihitung PcmPlayer dari
+            // berkas WAV yang sedang diputar, lalu dipetakan ke posisi
+            // pemutaran — bukan perkiraan dari waktu berjalan.
+            //
+            // Dikirim apa adanya: peredaman dan pembatas laju dikerjakan di
+            // sisi native (Perbarui), supaya mulut tetap mulus walaupun
+            // notifikasi properti datang tidak beraturan.
+            Live2DNative.AturMulut(_panggung, _vm.LevelSuara);
+        }
     }
 
     private void OnPanelUbahUkuran(object sender, SizeChangedEventArgs e) => UbahUkuranPanel();

@@ -717,6 +717,22 @@ namespace
                 _pandangan->SetParameters(daftar);
             }
             Catat("[swl2d] efek: pandangan aktif (dengan peredaman CubismTargetPoint)");
+
+            // ── LipSync ───────────────────────────────────────────────────
+            // CubismLipSyncUpdater resmi sengaja TIDAK dipakai: ia menuntut
+            // CubismUpdateScheduler (sama seperti CubismLookUpdater). Yang
+            // diambil hanya intinya — AddParameterValue dengan bobot 0,8 —
+            // persis CubismLipSyncUpdater.cpp:42. Nilainya datang dari C#
+            // berupa RMS audio nyata, bukan perkiraan.
+            _indeksMulut = _model->GetParameterIndex(id(DefaultParameterId::ParamMouthOpenY));
+            if (_indeksMulut >= 0)
+            {
+                Catat("[swl2d] efek: lipsync aktif (ParamMouthOpenY)");
+            }
+            else
+            {
+                Catat("[swl2d] efek: lipsync dilewati (model tidak punya ParamMouthOpenY)");
+            }
         }
 
         virtual ~ModelPanggung()
@@ -792,6 +808,24 @@ namespace
             if (_napas != nullptr) _napas->UpdateParameters(_model, dt);
 
             if (_physics != nullptr) _physics->Evaluate(_model, dt);
+
+            // ── LipSync (urutan 700 = SESUDAH fisika) ─────────────────────
+            // CubismUpdateOrder_LipSync = 700 (ICubismUpdater.hpp:23), jadi
+            // memang paling akhir. Nilai dari C# datang ~60 kali per detik;
+            // di sini dibatasi lajunya supaya mulut tidak bergetar mengikuti
+            // derau RMS — naik cepat, turun lebih lambat, seperti mulut orang.
+            if (_indeksMulut >= 0)
+            {
+                const csmFloat32 selisih = _mulutTarget - _mulutNilai;
+                const csmFloat32 langkah = (selisih > 0.0f ? KecepatanBuka : KecepatanTutup) * dt;
+                if (selisih > langkah) _mulutNilai += langkah;
+                else if (selisih < -langkah) _mulutNilai -= langkah;
+                else _mulutNilai = _mulutTarget;
+
+                // Bobot 0,8 sama dengan CubismLipSyncUpdater resmi.
+                _model->AddParameterValue(_indeksMulut, _mulutNilai, 0.8f);
+            }
+
             _model->Update();
         }
 
@@ -986,6 +1020,17 @@ namespace
             _titikPandang.Set(x, y);
         }
 
+        /// <summary>
+        /// Terima SASARAN bukaan mulut 0..1 dari LipSync. Nilai akhirnya
+        /// dihaluskan di Perbarui(); lihat komentar di sana.
+        /// </summary>
+        void AturMulut(csmFloat32 buka)
+        {
+            if (buka < 0.0f) buka = 0.0f;
+            if (buka > 1.0f) buka = 1.0f;
+            _mulutTarget = buka;
+        }
+
     private:
         static std::string Gabung(const std::string& dir, const std::string& nama)
         {
@@ -1010,6 +1055,20 @@ namespace
         // Peredaman arah pandang: sasaran dari AturPandang(), nilai halusnya
         // dibaca di Perbarui().
         CubismTargetPoint _titikPandang;
+
+        // LipSync. Indeks -1 berarti model tidak punya ParamMouthOpenY dan
+        // seluruh jalur ini dilewati.
+        //
+        // Kecepatan dibatasinya asimetris dengan sengaja: mulut membuka lebih
+        // cepat daripada menutup, sehingga terlihat seperti sedang berbicara
+        // dan bukan bergetar. Satuannya "per detik", bukan "per bingkai",
+        // supaya perilakunya sama pada 30 maupun 60 fps.
+        static constexpr csmFloat32 KecepatanBuka = 14.0f;
+        static constexpr csmFloat32 KecepatanTutup = 8.0f;
+
+        csmInt32 _indeksMulut = -1;
+        csmFloat32 _mulutTarget = 0.0f;
+        csmFloat32 _mulutNilai = 0.0f;
 
         // Mode uji (SWL2D_UJI): bekukan pose supaya sidik piksel tiap
         // ekspresi/gerakan bisa dibandingkan.
@@ -1915,6 +1974,15 @@ extern "C" int swl2d_stage_set_look(int stage, float x, float y)
     auto* p = g_panggung[static_cast<size_t>(stage) - 1];
     if (p == nullptr || p->model == nullptr) return SWL2D_ERR_HANDLE;
     p->model->AturPandang(x, y);
+    return SWL2D_OK;
+}
+
+extern "C" int swl2d_stage_set_mulut(int stage, float buka)
+{
+    if (stage <= 0 || stage > static_cast<int>(g_panggung.size())) return SWL2D_ERR_HANDLE;
+    auto* p = g_panggung[static_cast<size_t>(stage) - 1];
+    if (p == nullptr || p->model == nullptr) return SWL2D_ERR_HANDLE;
+    p->model->AturMulut(buka);
     return SWL2D_OK;
 }
 

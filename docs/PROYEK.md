@@ -76,7 +76,11 @@ VERIFIKASI (lakukan sebelum menulis kode apa pun):
   dotnet build SilverWolf.sln -p:Platform=x64 -c Debug    -> 0 error, 0 warning
   dotnet test tests/SilverWolf.Core.Tests/...             -> 114 lulus
   # native (MSBuild.exe DIBLOKIR; dotnet build tak punya VCTargetsPath):
-  bash native/SilverWolf.Live2D/build-cli.sh Release
+  #   KONFIGURASI HARUS SAMA DENGAN APLIKASI. csproj menyalin dari
+  #   build/x64/$(Configuration)/ — kalau native dibangun Release sementara
+  #   aplikasi dibangun Debug, DLL LAMA yang ikut tersalin dan fungsi native
+  #   baru tidak akan ketemu (gejalanya: fitur baru diam saja, tanpa error).
+  bash native/SilverWolf.Live2D/build-cli.sh Debug
   # C# — Platform=x64 DAN SelfContained WAJIB:
   dotnet build src/SilverWolf.App/SilverWolf.App.csproj \
     -c Debug -p:Platform=x64 -r win-x64 -p:SelfContained=true
@@ -143,10 +147,10 @@ Windows native, **tanpa kehilangan perilaku yang dirasakan pengguna**.
 | M5 | `KizunaEngine`, `CharacterVault`, `TieredMemoryEngine` | ✅ |
 | M6 | `OpenAiCompatibleProvider`, `LlamaServerProcess` | ✅ |
 | M7 | `AgentService`, `CompanionBackend`, `CompanionRuntime`, 108 uji | ✅ |
-| M8 | Renderer Live2D native (render, fit, fokus, motion, efek hidup) | 🟢 **Berjalan** — sisa: LipSync |
+| M8 | Renderer Live2D native (render, fit, fokus, motion, efek hidup, LipSync) | ✅ |
 | M9 | `MainWindow`, `CompanionViewModel`, 4 view, `AssetLocator` | ✅ |
 | M10 | Tema, blur, animasi, font | ❌ **DIBATALKAN** 2026-10-09 |
-| M11 | TTS: phonemizer, Piper, NAudio, lip-sync | 🟢 **terintegrasi** — sisa: LipSync (§8.2) |
+| M11 | TTS: phonemizer, Piper, NAudio, lip-sync | ✅ |
 | M12 | Tray, hotkey, single-instance, close-to-tray | ❌ **DIBATALKAN** 2026-10-09 |
 | M13 | Integrasi fitur end-to-end | ❌ **DIBATALKAN** 2026-10-09 |
 | M14 | Rilis | ⬜ — menunggu §8.1 tertutup |
@@ -320,7 +324,11 @@ dotnet build SilverWolf.sln -p:Platform=x64 -c Debug
 dotnet test tests/SilverWolf.Core.Tests/SilverWolf.Core.Tests.csproj
 
 # 3. Native — MSBuild.exe DIBLOKIR; dotnet build tak punya VCTargetsPath (MSB4019)
-bash native/SilverWolf.Live2D/build-cli.sh Release     # Debug juga sudah jalan
+#    Pakai KONFIGURASI YANG SAMA dengan langkah 4. csproj menyalin dari
+#    build/x64/$(Configuration)/, jadi native Release + aplikasi Debug =
+#    DLL LAMA yang tersalin, dan fungsi native baru tidak ketemu.
+#    Untuk rilis: bangun native Release DAN aplikasi -c Release.
+bash native/SilverWolf.Live2D/build-cli.sh Debug
 
 # 4. Bangun C# (perintah lengkap — tanpa flag ini hasilnya TIDAK BISA dijalankan)
 dotnet build src/SilverWolf.App/SilverWolf.App.csproj \
@@ -434,7 +442,14 @@ Diambil 2026-10-07 dengan menjalankan server Node asli mode stub
     mengembalikan `null` dan pemanggil memutar berurutan — **jeda lebih baik
     daripada suara rusak**. Sudah diverifikasi terhadap 50 WAV RVC nyata
     (semuanya PCM mono 40 kHz, `fmt ` 16 bita, tanpa chunk tambahan).
-13. **Kepala gelembung memakai `ChatBubble.NamaPeran`, bukan `Role`.**
+13. **LipSync memakai amplitudo audio NYATA** (dikunci 2026-10-09). RMS dihitung
+    dari isi berkas WAV lewat **pembaca terpisah** sebelum pemutaran, lalu
+    dipetakan ke `CurrentTime`. **Jangan** membaca dari `AudioFileReader` yang
+    sedang diputar — itu mencuri sampel dan membuat suara putus. **Jangan**
+    kembali ke perkiraan dari waktu berjalan: itu membuat mulut bergerak tanpa
+    hubungan dengan suara. Peredaman dan pembatas laju ada di sisi native
+    (`Perbarui()`, urutan 700 = sesudah fisika), bukan di C#.
+14. **Kepala gelembung memakai `ChatBubble.NamaPeran`, bukan `Role`.**
     `Role` adalah nilai protokol (`"user"`/`"assistant"`) yang dibaca
     `rapikanRiwayat` dan **harus tetap apa adanya**; yang tampil ke Master adalah
     "Silver Wolf". Menampilkan kata mentah `assistant` terasa seperti bocoran
@@ -1253,27 +1268,51 @@ tersimpan dulu sebelum membuka ulang.
 > Catatan untuk sesi berikutnya: proyek ini **murni C# + C++**. Jangan bawa
 > perkakas JS/npm ke sini, dan jangan menuliskannya ke catatan proyek.
 
-### 8.2 🟡 LipSync belum ada
+### 8.2 ✅ SELESAI (2026-10-09) — LipSync dari amplitudo audio NYATA
 
-Grup `LipSync` (`ParamMouthOpenY`) sudah tersedia di `model3.json` dan **rantai
-suaranya sekarang benar-benar menghasilkan audio** (`tools/tts/`), tetapi mulut
-belum digerakkan.
+Mulut digerakkan oleh `ParamMouthOpenY`, memakai amplitudo audio yang benar-benar
+diputar. Model memang sudah menyediakan grup `LipSync` berisi parameter itu
+(`silverwolf.model3.json`).
 
-Butuh `CubismLipSyncUpdater` (menuntut `CubismUpdateScheduler` yang sengaja
-dihindari) atau jalur sederhana: hitung amplitudo RMS per bingkai dari buffer
-audio yang sedang diputar, lalu `AddParameterValue(ParamMouthOpenY, a)`. Jalur
-kedua lebih cocok dengan pola `SiapkanEfek()` yang sudah ada.
+**Keputusan: `CubismLipSyncUpdater` resmi TIDAK dipakai.** Sama seperti
+`CubismLookUpdater`, ia menuntut `CubismUpdateScheduler` — lapisan yang sengaja
+dihindari di proyek ini. Yang diambil hanya intinya,
+`model->AddParameterValue(id, nilai, 0.8f)`, dengan bobot 0,8 yang sama seperti
+`CubismLipSyncUpdater.cpp:42`.
 
-**Prasyarat TERBUKTI TERPENUHI (2026-10-09).** Integrasi TTS (M11) selesai —
-pekerja menetap menghasilkan WAV nyata dan `PcmPlayer` sudah memunculkan
-`LevelBerubah` tiap 16 ms. Jadi §8.2 **tidak lagi menunggu M11**; ini pekerjaan
-mandiri berikutnya, dan jalurnya sudah ada tinggal disambungkan:
-amplitudo RMS per bingkai → `AddParameterValue(ParamMouthOpenY, a)` di dalam
-`SiapkanEfek()`.
+**Rantai lengkapnya:**
 
-Yang belum dikonfirmasi: audio **terdengar** dari speaker pada mesin Master
-(integrasi terbukti di tingkat berkas WAV dan log, bukan telinga). Konfirmasi
-terakhir harus dilakukan Master dengan menjalankan aplikasi.
+| Lapisan | Berkas | Peran |
+|---|---|---|
+| RMS nyata | `PcmPlayer.AnalisisAmplitudo` | membaca berkas WAV lewat **pembaca terpisah** sekali di muka → RMS per bingkai 60 Hz |
+| Pemetaan waktu | `PcmPlayer.AmbilLevel` | `CurrentTime` → indeks bingkai |
+| Perantara | `CompanionViewModel.LevelSuara` | properti terikat yang sudah ada |
+| Penerus | `StageView.OnVmBerubah` | `LevelSuara` → `Live2DNative.AturMulut` |
+| Penerapan | `Live2DStage.cpp` | peredaman + `AddParameterValue` |
+
+**Kenapa analisisnya di muka, bukan sambil diputar.** Membaca dari
+`AudioFileReader` yang sedang diputar akan **mencuri sampel** dan membuat suara
+putus — itu sebabnya versi lama memakai gelombang sinus dari `CurrentTime`, yang
+tidak ada hubungannya dengan isi audio. Berkasnya dibaca lewat pembaca kedua
+sebelum pemutaran dimulai, jadi amplitudonya benar tanpa mengganggu apa pun.
+Hasilnya dinormalkan ke puncak = 1 lalu diakar-kuadratkan supaya bagian pelan
+tetap terlihat.
+
+**Peredaman ada di sisi native, bukan C#.** Nilai dari C# datang ~60 kali per
+detik dan bisa bergetar; di `Perbarui()` nilainya dibatasi lajunya — buka
+14/detik, tutup 8/detik — sehingga mulut membuka lebih cepat daripada menutup,
+seperti mulut orang. Urutannya **700 (`CubismUpdateOrder_LipSync`), yaitu
+SESUDAH fisika**, sesuai `ICubismUpdater.hpp:23`.
+
+**Uji:** 3 uji baru di `PcmPlayerLevelTests` mengunci bahwa amplitudo mengikuti
+**isi** audio, bukan waktu berjalan: berkas dengan separuh keras + separuh pelan
+harus menghasilkan bingkai awal jauh lebih besar daripada bingkai akhir; audio
+hening tidak boleh menghasilkan `NaN`. Services **23 → 26**.
+
+⚠️ **Belum dikonfirmasi mata.** Perlu Master menjalankan aplikasi. Kalau mulut
+tidak bergerak, baca `crash.log` — salah satu dari dua baris ini harus ada:
+`[swl2d] efek: lipsync aktif (ParamMouthOpenY)` atau
+`lipsync dilewati (model tidak punya ParamMouthOpenY)`.
 
 ### 8.3 ✅ SELESAI — ukuran jendela 20% lebih kecil daripada aplikasi lama
 
@@ -1350,14 +1389,12 @@ test. Perlu satu jalan nyata yang menunjukkan "MEMUAT VULKAN…" di UI.
 
 1. **§8.1 — hentikan kematian senyap.** Ini yang memblokir segalanya. Mulai dari
    langkah `.env` yang paling murah, satu perubahan per uji.
-2. **§8.2 — LipSync.** ✅ **M11 selesai** (komit `dfc1125`): pekerja menetap
-   menghasilkan WAV nyata, `PcmPlayer` sudah memunculkan `LevelBerubah` tiap
-   16 ms. Rantainya tidak perlu diriset lagi — `tools/tts/README.md` memuat cara
-   pakai, profil terkunci, dan angka latensi. Yang tinggal: RMS per bingkai →
-   `AddParameterValue(ParamMouthOpenY, a)`.
-3. **§8.6 — verifikasi pengenalan 503 terhadap llama-server sungguhan.**
+2. **§8.6 — verifikasi pengenalan 503 terhadap llama-server sungguhan.**
    Kodenya sudah dikunci unit test; yang kurang satu jalan nyata yang
    menunjukkan "MEMUAT VULKAN…" di UI.
+3. **Konfirmasi telinga & mata.** Audio mengalir tanpa jeda dan mulut mengikuti
+   suara — keduanya baru terbukti di tingkat berkas dan unit test, belum di
+   depan Master. Jalankan aplikasi; §8.1 tetap cacat paling serius.
 4. **M14 — rilis.**
 
 **DIBATALKAN 2026-10-09 atas keputusan Master — jangan dikerjakan:**

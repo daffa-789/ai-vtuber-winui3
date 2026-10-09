@@ -40,8 +40,24 @@ public sealed class PcmPlayer : IDisposable
         _log = log;
     }
 
-    /// <summary>Kejadian saat volume keluaran berubah, untuk menggerakkan mulut.</summary>
+    /// <summary>
+    /// Amplitudo audio 0..1 pada posisi pemutaran saat ini, untuk menggerakkan
+    /// mulut (LipSync).
+    ///
+    /// <para>
+    /// <b>Ini RMS nyata, bukan perkiraan.</b> Nilainya dihitung sekali di muka
+    /// dari isi berkas WAV, lalu dibaca mengikuti <c>CurrentTime</c> pemutar.
+    /// Versi lama memakai gelombang sinus dari waktu berjalan — mulutnya
+    /// bergerak, tetapi tidak ada hubungannya dengan suara yang keluar.
+    /// </para>
+    /// </summary>
     public event Action<float>? LevelBerubah;
+
+    /// <summary>Berapa kali per detik amplitudo dilaporkan.</summary>
+    private const int LajuBingkai = 60;
+
+    /// <summary>RMS per bingkai untuk berkas yang sedang diputar.</summary>
+    private float[]? _bingkaiLevel;
 
     /// <summary>
     /// Putar satu berkas WAV dan tunggu sampai selesai. Mengembalikan
@@ -120,6 +136,10 @@ public sealed class PcmPlayer : IDisposable
     private async Task<bool> PutarSekaliAsync(
         string jalur, int percobaan, CancellationToken ct, Action? saatMulai)
     {
+        // Dihitung sekali di muka, sebelum perangkat dibuka. Hasilnya dipakai
+        // sepanjang pemutaran dengan membaca CurrentTime.
+        _bingkaiLevel = AnalisisAmplitudo(jalur);
+
         _pembaca = new AudioFileReader(jalur) { Volume = 1.0f };
         _keluaran = new WaveOutEvent
         {
@@ -237,9 +257,10 @@ public sealed class PcmPlayer : IDisposable
         {
             try
             {
-                // Perkiraan aktivitas; jangan membaca/mencuri sampel pemutar.
-                var level = HitungLevel(pembaca);
-                LevelBerubah?.Invoke(level);
+                // Jangan membaca dari pembaca yang sedang diputar — itu mencuri
+                // sampel dan membuat suaranya putus. Yang dibaca hanya posisi
+                // waktu, lalu diambil bingkai RMS yang sudah dihitung di muka.
+                LevelBerubah?.Invoke(AmbilLevel(pembaca));
             }
             catch
             {
@@ -259,29 +280,88 @@ public sealed class PcmPlayer : IDisposable
         LevelBerubah?.Invoke(0f);
     }
 
-    /// <summary>
-    /// Perkiraan amplitudo tanpa memindahkan posisi baca.
-    ///
-    /// <para>
-    /// <b>Jangan memanggil Read() di sini.</b> Membaca dari
-    /// <see cref="AudioFileReader"/> saat sedang diputar akan mencuri sampel
-    /// dari pemutaran — suara jadi putus-putus. Karena itu kita hanya memakai
-    /// <c>CurrentTime</c> relatif terhadap durasi sebagai perkiraan aktivitas,
-    /// lalu memperhalusnya supaya mulut tidak berkedip.
-    /// </para>
-    /// </summary>
-    private static float HitungLevel(AudioFileReader pembaca)
+    /// <summary>Ambil bingkai RMS pada posisi pemutaran saat ini.</summary>
+    private float AmbilLevel(AudioFileReader pembaca)
     {
-        if (pembaca.TotalTime.TotalSeconds <= 0)
+        var bingkai = _bingkaiLevel;
+        if (bingkai is null || bingkai.Length == 0)
         {
             return 0f;
         }
 
-        // Aktivitas = gelombang sinus lembut sepanjang durasi; cukup untuk
-        // mulut yang terlihat hidup tanpa artefak.
-        var t = pembaca.CurrentTime.TotalSeconds;
-        var dasar = 0.55f + (0.45f * (float)Math.Abs(Math.Sin(t * 8.0)));
-        return Math.Clamp(dasar, 0f, 1f);
+        var i = (int)(pembaca.CurrentTime.TotalSeconds * LajuBingkai);
+        if (i < 0) i = 0;
+        if (i >= bingkai.Length) i = bingkai.Length - 1;
+        return bingkai[i];
+    }
+
+    /// <summary>
+    /// Hitung RMS per bingkai dari isi berkas WAV, sekali di muka.
+    ///
+    /// <para>
+    /// <b>Kenapa di muka.</b> Membaca dari <see cref="AudioFileReader"/> yang
+    /// sedang diputar akan mencuri sampel dan membuat suaranya putus. Karena itu
+    /// berkasnya dibaca lewat pembaca TERPISAH sebelum pemutaran dimulai; cara
+    /// ini memberi amplitudo yang benar tanpa mengganggu apa pun.
+    /// </para>
+    ///
+    /// <para>
+    /// Hasilnya dinormalkan ke puncak tertinggi = 1, lalu diambil akar
+    /// kuadratnya supaya bagian yang pelan tetap terlihat di mulut. Perhatikan
+    /// bahwa puncaknya dijadikan acuan, jadi balasan yang memang direkam pelan
+    /// tetap membuka mulut penuh — itu disengaja untuk model ini.
+    /// </para>
+    /// </summary>
+    internal static float[] AnalisisAmplitudo(string jalur)
+    {
+        var bingkai = new List<float>();
+        try
+        {
+            using var baca = new AudioFileReader(jalur);
+            var perBingkai = Math.Max(1, baca.WaveFormat.SampleRate / LajuBingkai);
+            var buffer = new float[perBingkai];
+
+            int dibaca;
+            while ((dibaca = baca.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                double jumlah = 0;
+                for (var i = 0; i < dibaca; i++)
+                {
+                    jumlah += (double)buffer[i] * buffer[i];
+                }
+
+                bingkai.Add((float)Math.Sqrt(jumlah / dibaca));
+            }
+        }
+        catch (Exception)
+        {
+            // Berkas tidak terbaca: mulut cukup diam, suaranya tetap diputar.
+            return Array.Empty<float>();
+        }
+
+        if (bingkai.Count == 0)
+        {
+            return Array.Empty<float>();
+        }
+
+        var puncak = 0f;
+        foreach (var nilai in bingkai)
+        {
+            if (nilai > puncak) puncak = nilai;
+        }
+
+        if (puncak <= 0.0001f)
+        {
+            // Hening total; jangan bagi nol.
+            return bingkai.ToArray();
+        }
+
+        for (var i = 0; i < bingkai.Count; i++)
+        {
+            bingkai[i] = MathF.Sqrt(Math.Min(1f, bingkai[i] / puncak));
+        }
+
+        return bingkai.ToArray();
     }
 
     private void Bersihkan()

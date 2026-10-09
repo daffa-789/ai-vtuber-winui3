@@ -103,6 +103,14 @@ internal static class Live2DNative
     public static int AturTampak(int panggung, float perbesaran, float geserX, float jangkarY) =>
         Coba(() => swl2d_stage_set_view(panggung, perbesaran, geserX, jangkarY), "swl2d_stage_set_view");
 
+    /// <summary>
+    /// LipSync: atur bukaan mulut 0..1. Dipanggil ~60 kali per detik selama
+    /// audio diputar. Nilainya dihaluskan di sisi native, jadi mengirim nilai
+    /// mentah RMS di sini memang yang diinginkan.
+    /// </summary>
+    public static int AturMulut(int panggung, float buka) =>
+        Coba(() => swl2d_stage_set_mulut(panggung, buka), "swl2d_stage_set_mulut");
+
     public static void Hentikan()
     {
         if (!_siap)
@@ -223,4 +231,7 @@ internal static class Live2DNative
 
     [DllImport(Berkas, CallingConvention = CallingConvention.Cdecl)]
     private static extern int swl2d_stage_set_view(int panggung, float perbesaran, float geserX, float jangkarY);
+
+    [DllImport(Berkas, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int swl2d_stage_set_mulut(int panggung, float buka);
 }

@@ -82,6 +82,24 @@ SWL2D_API int  swl2d_stage_set_look(int stage, float x, float y);
 /// <summary>Atur pembingkaian: zoom, geser horizontal, dan jangkar vertikal.</summary>
 SWL2D_API int  swl2d_stage_set_view(int stage, float zoom, float offsetX, float anchorY);
 
+/// <summary>
+/// Atur seberapa terbuka mulut, 0..1 — dipakai LipSync.
+///
+/// <para>
+/// Nilai ini adalah SASARAN, bukan nilai akhir: di dalam Perbarui() nilainya
+/// dihaluskan dengan pembatas laju (naik lebih cepat daripada turun) supaya
+/// mulut tidak bergetar mengikuti derau RMS. Panggil sekitar 60 kali per detik
+/// mengikuti posisi pemutaran.
+/// </para>
+///
+/// <para>
+/// Parameter yang digerakkan adalah <c>ParamMouthOpenY</c>. Kalau model tidak
+/// punya parameter itu, fungsi ini tetap mengembalikan SWL2D_OK tetapi tidak
+/// ada yang bergerak — pemeriksaannya dilakukan sekali saat panggung dibuat.
+/// </para>
+/// </summary>
+SWL2D_API int  swl2d_stage_set_mulut(int stage, float buka);
+
 #ifdef __cplusplus
 }
 #endif
