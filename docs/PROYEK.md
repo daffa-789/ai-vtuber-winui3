@@ -1173,6 +1173,54 @@ kali jalan** dan dilaporkan sebagai rasio (mis. "lolos 4/5"), bukan "berhasil".
   `tts: siap (rantai=piper+rvc,piper, rvc=True)`, bukti bahwa pipeline suara
   (M11) benar-benar terbangun di dalam aplikasi nyata.
 
+#### Pembaruan 2026-10-09 (sore) — riset eksternal §8.1: tiga isu hulu yang cocok
+
+Riset ke repo hulu `ggml-org/llama.cpp` menemukan tiga laporan yang **cocok
+dengan konfigurasi kita** — model `gemma-4-E4B-it-UD-Q4_K_XL.gguf` (arsitektur
+gemma4, MoE), backend Vulkan, Windows:
+
+| Isu | Judul ringkas | Mengapa relevan |
+|---|---|---|
+| **#29221** | Gemma 4 (26B-A4B MoE) mematikan server pada permintaan ke-2 dengan `-np 4` di Vulkan — `GGML_ASSERT("tensor not allocated")`. **`-np 3` baik, backend CPU baik** | model pada laporan itu `gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf` — famili, arsitektur, dan kuantisasi yang **sama** dengan model kita; biner Vulkan Windows; mati saat Vulkan mulai menghitung |
+| **#29786** | Vulkan **mati tanpa diagnostik apa pun** pada driver Adreno; biner dan argumen yang sama selesai di driver lain; `-ngl 0` selesai | pola persis §8.1: berhenti tanpa pesan, tanpa Event Log, tanpa dump. Ini bukti bahwa "Vulkan mati tanpa diagnostik" adalah mode kegagalan **nyata yang sudah dilaporkan**, bukan halusinasi diagnosis kita |
+| **#27560** | `llama-server` mati (`0xC0000005`) di Windows/Vulkan dengan ctx-checkpoint bawaan | Windows + Vulkan + server, kombinasi yang sama |
+
+**Yang sudah tersingkirkan berkat riset ini:** `-np` kita **sudah `1`**
+(`src/SilverWolf.Services/Llama/LlamaServerProcess.cs:89`), jadi pemicu `-np 4`
+pada #29221 **bukan** milik kita. Jangan buang waktu ke sana.
+
+**Percobaan paling murah berikutnya — satu baris `.env`, tanpa build ulang:**
+
+```
+VTUBER_VULKAN_FA=tidak
+```
+
+Alasannya: `LlamaServerProcess.cs` baris 97–100 menambahkan `--flash-attn on`
+untuk jalur Vulkan, dan beberapa laporan Vulkan terbaru justru menyangkut flash
+attention (#30166 `FLASH_ATTN_EXT` hasil salah; #29965 pengelompokan head).
+
+**Urutan percobaan yang disarankan** (Mode A terbukti intermiten, jadi setiap
+langkah wajib dilaporkan sebagai **rasio**, mis. "lolos 4/5"):
+
+1. `VTUBER_VULKAN_FA=tidak` → jalankan 5×.
+2. Masih mati → ganti `-ctk`/`-ctv` ke `f16`.
+3. Masih mati → `VTUBER_LLM_PROVIDER=local` (`-ngl 0`). Ini yang membuat #29786
+   selesai, dan sejalan dengan catatan lama bahwa jalur CPU tidak pernah mati.
+
+**Cara mengulang riset ini.** Unduhan Chromium bawaan `agent-browser` **gagal**
+di jaringan ini (198 MB, tiga kali percobaan, `operation timed out`). Yang
+berhasil: pakai Chromium milik Playwright yang sudah ada —
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH="C:/Users/Daffa/AppData/Local/ms-playwright"
+agent-browser open "https://github.com/ggml-org/llama.cpp/issues?q=..."
+agent-browser wait --load load      # JANGAN networkidle — GitHub tidak pernah idle
+agent-browser snapshot
+agent-browser close                 # wajib, supaya daemon tidak menumpuk
+```
+
+Hasilnya tersimpan di `outputs/riset-8.1*.txt`.
+
 ### 8.2 🟡 LipSync belum ada
 
 Grup `LipSync` (`ParamMouthOpenY`) sudah tersedia di `model3.json` dan **rantai
