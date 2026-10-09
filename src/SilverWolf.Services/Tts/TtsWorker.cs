@@ -38,6 +38,12 @@ public sealed class TtsWorker
     /// <summary>Cache: hash teks+profil → jalur WAV yang sudah ada.</summary>
     private readonly string _folderCache;
 
+    /// <summary>
+    /// Pekerja Python menetap. Dimuat sekali, dipakai untuk semua kalimat.
+    /// Lihat <see cref="PekerjaTts"/> untuk alasan lengkapnya.
+    /// </summary>
+    private readonly PekerjaTts? _pekerja;
+
     public TtsWorker(AppConfig konfig, Action<string>? log = null)
     {
         _konfig = konfig;
@@ -46,6 +52,11 @@ public sealed class TtsWorker
 
         _skripPiper = Path.Combine(_akar, "tools", "tts", "buat_suara.py");
         _folderCache = Path.Combine(Path.GetTempPath(), "silverwolf-tts");
+
+        // Pekerja hanya dibuat kalau diizinkan. Kalau tidak, jalur lama
+        // (proses per kalimat) tetap dipakai — lambat tapi masih berfungsi,
+        // dan berguna untuk membandingkan saat mendiagnosis.
+        _pekerja = konfig.TtsPekerja ? new PekerjaTts(konfig, log) : null;
     }
 
     /// <summary>Apakah TTS diizinkan berjalan pada konfigurasi ini.</summary>
@@ -175,11 +186,41 @@ public sealed class TtsWorker
 
         Directory.CreateDirectory(Path.GetDirectoryName(keluaran)!);
 
-        // ArgumentList menjaga kutip, Unicode, dan backslash tanpa escape manual.
+        // Penulisan selalu lewat berkas sementara, lalu dipindahkan. Dengan
+        // begitu pembaca tidak pernah melihat WAV setengah jadi, dan kegagalan
+        // di tengah jalan tidak meninggalkan cache yang rusak.
+        var sementara = keluaran + $".{Guid.NewGuid():N}.wav";
+
+        // ── Jalur pekerja menetap ────────────────────────────────────────────
+        // Model RVC dimuat SEKALI untuk seluruh sesi. Ini yang membuat suara
+        // benar-benar keluar: tanpa ini setiap kalimat membayar ~20 dtk hanya
+        // untuk memuat rmvpe, dan balasan dua kalimat menembus batas waktu.
+        if (_pekerja is { Tersedia: true })
+        {
+            var wav = await _pekerja
+                .HasilkanAsync(teks, sementara, tanpaRvc: !_konfig.Rvc, ct)
+                .ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            if (wav is not null && WavSah(sementara))
+            {
+                File.Move(sementara, keluaran, overwrite: true);
+                return keluaran;
+            }
+            _log?.Invoke($"[tts] pekerja tidak menghasilkan WAV: {Potong(teks, 40)}"
+                + (_pekerja.Galat is { } g ? $" ({g})" : ""));
+            // Tidak jatuh ke jalur lama untuk kalimat ini: itu berarti memuat
+            // ulang model penuh dan justru memperparah. Kalimat berikutnya
+            // akan menyalakan pekerja lagi.
+            try { if (File.Exists(sementara)) File.Delete(sementara); }
+            catch (IOException) { }
+            return null;
+        }
+
+        // ── Jalur lama: proses Python baru per kalimat ───────────────────────
+        // Dipakai hanya kalau VTUBER_TTS_PEKERJA=tidak.
         var argumen = new List<string> { _skripPiper };
         if (!_konfig.Rvc) argumen.Add("--no-rvc");
         argumen.Add(teks);
-        var sementara = keluaran + $".{Guid.NewGuid():N}.wav";
         argumen.Add(sementara);
 
         var py = CariPython();
@@ -391,6 +432,14 @@ public sealed class TtsWorker
             return false;
         }
     }
+
+    /// <summary>
+    /// Hentikan pekerja menetap. Dipanggil saat aplikasi ditutup — tanpa ini
+    /// proses Python beserta torch tetap hidup dan menahan ratusan MB memori,
+    /// yang pada mesin ini (16 GB, sering hanya ~3,7 GB bebas) langsung
+    /// memperburuk masalah kehabisan memori.
+    /// </summary>
+    public void Matikan() => _pekerja?.Matikan();
 
     private static string Potong(string teks, int n) =>
         teks.Length <= n ? teks : teks[..n] + "…";

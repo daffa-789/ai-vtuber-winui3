@@ -94,6 +94,29 @@ public sealed class AppConfig
     /// </summary>
     public bool TtsPerKalimat { get; set; } = true;
 
+    /// <summary>
+    /// VTUBER_TTS_PEKERJA — pakai pekerja Python menetap (model dimuat sekali)
+    /// alih-alih proses baru per kalimat.
+    ///
+    /// <para>
+    /// <b>Kenapa ini ada:</b> kalau setiap kalimat menjalankan proses Python
+    /// baru, seluruh model RVC dimuat ulang tiap kali — diukur di mesin ini,
+    /// ~20 detik hilang per kalimat hanya untuk memuat rmvpe. Balasan dua
+    /// kalimat menembus batas 40 detik dan tidak pernah menghasilkan suara.
+    /// Pekerja menetap membayar biaya itu sekali saja per sesi.
+    /// </para>
+    /// </summary>
+    public bool TtsPekerja { get; set; } = true;
+
+    /// <summary>
+    /// VTUBER_TTS_PEKERJA_SIAP_DETIK — batas waktu menunggu model dimuat saat
+    /// pekerja pertama kali dinyalakan. Terpisah dari
+    /// <see cref="TtsBatasDetik"/> karena memuat model jelas lebih lama
+    /// daripada satu kalimat, dan mencampur keduanya pernah membuat model
+    /// yang sehat dimatikan di tengah pemuatan.
+    /// </summary>
+    public int TtsPekerjaSiapDetik { get; set; } = 120;
+
     /// <summary>VTUBER_TTS_BATAS_DETIK — batas waktu satu kalimat diproses.</summary>
     public int TtsBatasDetik { get; set; } = 40;
 
@@ -225,6 +248,8 @@ public static class ConfigReader
             TtsPerKalimat = env.Bool("VTUBER_TTS_PER_KALIMAT", true),
             TtsBatasDetik = env.Int("VTUBER_TTS_BATAS_DETIK", 40),
             TtsCache = env.Bool("VTUBER_TTS_CACHE", true),
+            TtsPekerja = env.Bool("VTUBER_TTS_PEKERJA", true),
+            TtsPekerjaSiapDetik = env.Int("VTUBER_TTS_PEKERJA_SIAP_DETIK", 120),
             Rvc = env.Bool("VTUBER_RVC", true),
             RvcModel = env.Value("VTUBER_RVC_MODEL", "SilverWolfJP"),
             RvcVersi = env.Value("VTUBER_RVC_VERSI", "v2"),

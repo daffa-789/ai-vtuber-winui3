@@ -32,7 +32,14 @@ public sealed class TtsPipeline : IDisposable
         _siap = () => _pekerja.Siap;
         _hasilkan = _pekerja.HasilkanSatuAsync;
         _putar = (wav, ct, mulai) => _pemutar.PutarAsync(wav, 1.0f, ct, mulai);
-        _buangPemutar = _pemutar.Dispose;
+        _buangPemutar = () =>
+        {
+            // Pekerja Python menetap menahan torch + model di memori. Melepas
+            // pemutar audio saja tidak cukup: proses Python akan terus hidup
+            // sebagai proses yatim dan menekan RAM — bahan bakar Mode B.
+            _pekerja.Matikan();
+            _pemutar.Dispose();
+        };
     }
 
     // Titik injeksi untuk uji antrean tanpa Python, perangkat audio, atau model.

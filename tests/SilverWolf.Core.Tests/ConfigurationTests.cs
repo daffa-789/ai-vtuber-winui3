@@ -159,6 +159,52 @@ public class ConfigurationTests
         Assert.Equal(8788, konfig.PortInferensi);
     }
 
+    [Fact]
+    public void BacaKonfig_PekerjaTtsHidupSecaraBawaan()
+    {
+        // Pekerja menetap harus hidup secara bawaan: tanpa itu setiap kalimat
+        // memuat ulang seluruh model RVC (~20 dtk) dan suara tidak pernah
+        // keluar karena antrean menembus batas waktu.
+        var konfig = ConfigReader.Baca(new EnvSource(), "C:\\akar");
+
+        Assert.True(konfig.TtsPekerja);
+    }
+
+    [Theory]
+    [InlineData("ya", true)]
+    [InlineData("tidak", false)]
+    [InlineData("", true)]
+    public void BacaKonfig_PekerjaTtsBisaDimatikan(string nilai, bool expected)
+    {
+        var env = new EnvSource
+        {
+            File = new Dictionary<string, string> { ["VTUBER_TTS_PEKERJA"] = nilai },
+        };
+
+        Assert.Equal(expected, ConfigReader.Baca(env, "C:\\akar").TtsPekerja);
+    }
+
+    [Fact]
+    public void BacaKonfig_BatasSiapPekerjaTerpisahDariBatasKalimat()
+    {
+        // Dua batas ini sengaja dipisah. Mencampurnya pernah membuat model yang
+        // sehat dimatikan di tengah pemuatan, dan gejalanya menyerupai crash.
+        var env = new EnvSource
+        {
+            File = new Dictionary<string, string>
+            {
+                ["VTUBER_TTS_BATAS_DETIK"] = "75",
+                ["VTUBER_TTS_PEKERJA_SIAP_DETIK"] = "180",
+            },
+        };
+
+        var konfig = ConfigReader.Baca(env, "C:\\akar");
+
+        Assert.Equal(75, konfig.TtsBatasDetik);
+        Assert.Equal(180, konfig.TtsPekerjaSiapDetik);
+        Assert.True(konfig.TtsPekerjaSiapDetik > konfig.TtsBatasDetik);
+    }
+
     [Theory]
     [InlineData("local", "local")]
     [InlineData("llama_cpp", "local")]
