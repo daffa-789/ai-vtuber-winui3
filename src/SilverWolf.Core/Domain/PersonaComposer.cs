@@ -93,6 +93,26 @@ public static class PersonaComposer
                 "WAJIB: Awali setiap balasanmu dengan satu tag emosi di paling depan, persis satu dari " +
                 $"{EmotionTags.UntukPrompt()}. " +
                 "Contoh: [goda] Iya sayangku, ada apa? Sini cerita sama pacarmu.");
+
+            // Balasan ini DIUCAPKAN mesin TTS, bukan dibaca mata. Penanda
+            // Markdown akan dibacakan sebagai karakter — bintang menjadi
+            // "bintang", backtick menjadi "backtick". Master sudah mengeluhkan
+            // ini secara langsung ("kaya ada * dia malah mengatakan bintang").
+            // Karena itu keluaran harus berupa teks bersih + tanda baca biasa,
+            // yang justru sumber intonasi TTS.
+            bagian.Add(
+                "ATURAN SUARA (penting, balasanmu akan DIUCAPKAN sebagai suara, bukan dibaca):\n" +
+                "- JANGAN pakai penanda Markdown apa pun. Dilarang memakai tanda bintang untuk " +
+                "menekankan kata (*kata* atau **kata**), backtick (`kata`), garis bawah (_kata_), " +
+                "tanda pagar (#), atau tanda panah.\n" +
+                "- JANGAN pakai emoji dan simbol hias.\n" +
+                "- Untuk menekankan, pakai KATA dan TANDA BACA biasa: koma untuk jeda pendek, " +
+                "titik untuk jeda panjang, tanda tanya untuk nada naik, tanda seru untuk nada tegas, " +
+                "titik-titik (...) untuk menggantung.\n" +
+                "- Tulis kata sebagaimana kamu mengucapkannya. Kalau ragu apakah sebuah tanda " +
+                "akan diucapkan, jangan pakai tanda itu.\n" +
+                "Contoh BENAR: [goda] Jadi kamu kangen Kafka, bukan aku? Hmph, aku cemburu tahu.\n" +
+                "Contoh SALAH: [goda] Jadi kamu kangen *Kafka*, bukan *aku*? Hmph, aku **cemburu** tahu.");
         }
 
         if (!string.IsNullOrEmpty(kizunaContext))

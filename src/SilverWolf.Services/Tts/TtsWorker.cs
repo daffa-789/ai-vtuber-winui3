@@ -167,10 +167,31 @@ public sealed class TtsWorker
     public async Task<string?> HasilkanSatuAsync(string kalimat, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var teks = SentenceSplitter.BuangTag(kalimat).Trim();
+        // Dua tahap, dan urutannya penting:
+        //   1. BuangTag   — tag [emosi] dari protokol balasan;
+        //   2. Bersihkan  — penanda Markdown (*, `, #, —) supaya TTS tidak
+        //                   mengucapkannya sebagai "bintang" (keluhan Master).
+        // Dipasang di sini karena INI satu-satunya titik yang dilewati semua
+        // jalur sintesis — TtsPipeline maupun HasilkanAsync.
+        var teks = TeksUcapan.Bersihkan(SentenceSplitter.BuangTag(kalimat)).Trim();
         if (teks.Length == 0)
         {
             return null;
+        }
+
+        // Intonasi. Tag emosi dibaca dari teks ASLI (sebelum dibersihkan),
+        // karena BuangTag sudah menghapusnya.
+        //
+        // Hanya dipakai kalau emosinya dikenal — kalau tidak, null dikirim dan
+        // pekerja memakai tempo bawaan sesi. Ini menjaga perilaku lama tetap
+        // sama untuk balasan yang tidak bertag.
+        var emosi = EmotionParser.ExtractEmotion(kalimat).Emotion;
+        var tempo = Intonasi.Dikenali(emosi) ? Intonasi.Tempo(emosi) : (double?)null;
+        // Jeda eksplisit hanya bila tempo memang dipakai, supaya kalimat tanpa
+        // emosi tidak berubah bentuknya.
+        if (tempo is not null)
+        {
+            teks = Intonasi.BeriJeda(teks, emosi);
         }
 
         // ── Cache ────────────────────────────────────────────────────────────
@@ -198,7 +219,7 @@ public sealed class TtsWorker
         if (_pekerja is { Tersedia: true })
         {
             var wav = await _pekerja
-                .HasilkanAsync(teks, sementara, tanpaRvc: !_konfig.Rvc, ct)
+                .HasilkanAsync(teks, sementara, tanpaRvc: !_konfig.Rvc, ct, tempo)
                 .ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             if (wav is not null && WavSah(sementara))

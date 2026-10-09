@@ -265,7 +265,8 @@ public sealed class PekerjaTts : IDisposable
     /// yang mematikannya supaya panggilan berikutnya menyalakannya ulang.
     /// </summary>
     public async Task<string?> HasilkanAsync(
-        string teks, string keluaran, bool tanpaRvc, CancellationToken ct = default)
+        string teks, string keluaran, bool tanpaRvc, CancellationToken ct = default,
+        double? tempo = null)
     {
         await _kunci.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -295,6 +296,10 @@ public sealed class PekerjaTts : IDisposable
                 keluar = keluaran,
                 piper = CariPiper(),
                 tanpa_rvc = tanpaRvc,
+                // Intonasi: tempo bicara per emosi. null = pakai bawaan pekerja
+                // (VTUBER_TTS_PIPER_PANJANG) supaya perilaku lama tidak berubah
+                // saat pemanggil tidak menentukan apa pun.
+                tempo,
             });
 
             try

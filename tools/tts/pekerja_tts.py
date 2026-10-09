@@ -204,11 +204,14 @@ class Pekerja:
         )
         log(f"[pekerja] model siap dalam {time.time()-t:.1f} s")
 
-    def _piper(self, teks: str, keluar: Path) -> None:
+    def _piper(self, teks: str, keluar: Path, panjang: float | None = None) -> None:
         keluar.parent.mkdir(parents=True, exist_ok=True)
+        # panjang berisi permintaan per-kalimat (intonasi per emosi dari C#).
+        # Kalau None, pakai nilai bawaan sesi supaya perilaku lama tetap sama.
+        skala = self.panjang if panjang is None else float(panjang)
         hasil = subprocess.run(
             [self.piper, "-m", str(MODEL_PIPER), "-f", str(keluar),
-             "--length-scale", str(self.panjang)],
+             "--length-scale", str(skala)],
             input=teks.encode("utf-8"), capture_output=True,
         )
         if hasil.returncode != 0 or not keluar.is_file():
@@ -224,11 +227,18 @@ class Pekerja:
         if not teks:
             raise RuntimeError("teks kosong")
 
+        panjang = permintaan.get("tempo")
+        if panjang is not None:
+            try:
+                panjang = float(panjang)
+            except (TypeError, ValueError):
+                panjang = None
+
         mulai = time.time()
         kirim({"jenis": "progres", "tahap": "piper"})
 
         mentah = self.tmp / f"{os.getpid()}-{int(mulai*1000)}.wav"
-        self._piper(teks, mentah)
+        self._piper(teks, mentah, panjang)
 
         # Lewati RVC kalau induk memintanya (VTUBER_RVC=tidak).
         if permintaan.get("tanpa_rvc"):
