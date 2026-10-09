@@ -145,11 +145,20 @@ Windows native, **tanpa kehilangan perilaku yang dirasakan pengguna**.
 | M7 | `AgentService`, `CompanionBackend`, `CompanionRuntime`, 108 uji | ✅ |
 | M8 | Renderer Live2D native (render, fit, fokus, motion, efek hidup) | 🟢 **Berjalan** — sisa: LipSync |
 | M9 | `MainWindow`, `CompanionViewModel`, 4 view, `AssetLocator` | ✅ |
-| M10 | Tema, blur, animasi, font | ⬜ |
-| M11 | TTS: phonemizer, Piper, NAudio, lip-sync | 🟢 **terintegrasi & terdengar** — sisa: LipSync (§8.2) |
-| M12 | Tray, hotkey, single-instance, close-to-tray | ⬜ |
-| M13 | Integrasi fitur end-to-end | ⬜ |
-| M14 | Rilis | ⬜ |
+| M10 | Tema, blur, animasi, font | ❌ **DIBATALKAN** 2026-10-09 |
+| M11 | TTS: phonemizer, Piper, NAudio, lip-sync | 🟢 **terintegrasi** — sisa: LipSync (§8.2) |
+| M12 | Tray, hotkey, single-instance, close-to-tray | ❌ **DIBATALKAN** 2026-10-09 |
+| M13 | Integrasi fitur end-to-end | ❌ **DIBATALKAN** 2026-10-09 |
+| M14 | Rilis | ⬜ — menunggu §8.1 tertutup |
+
+> **M10, M12, M13 dibatalkan atas keputusan Master (2026-10-09).** Tema/blur/
+> animasi/font tidak diperlukan; tray, hotkey, single-instance, dan close-to-tray
+> tidak diperlukan; "integrasi end-to-end" bukan lagi milestone terpisah karena
+> bagian yang dipakai sudah hidup (Live2D + obrolan + suara). **Jangan
+> mengerjakannya lagi kecuali Master memintanya.**
+>
+> Yang tersisa sebelum rilis, semua menyangkut keandalan:
+> §8.1 kematian senyap → §8.2 LipSync → §8.6 verifikasi 503.
 
 ### M11 — apa yang sudah dan belum
 
@@ -395,9 +404,17 @@ Diambil 2026-10-07 dengan menjalankan server Node asli mode stub
 5. **Pengguna kizuna berperan `guest`, bukan `owner`.** Retensi 90 hari berlaku.
 6. **Poin bersifat pecahan**, bukan bilangan bulat.
 7. **Polling health:** 8000 ms bila siap, 2000 ms bila belum.
-8. **Pekerja proaktif:** interval 5000 ms; picu bila hewan > **65.000 ms** dan
-   `!AutonomousMode || IsSending || audioBusy` tidak terlewati; nilai `idle` =
-   `max(10, round((now - LastUserActivity) / 1000))`.
+8. **SATU PERCAKAPAN = SATU BALASAN** (dikunci 2026-10-09 atas keluhan Master).
+   Pekerja proaktif (interval 5000 ms, picu bila hening > **65.000 ms**, nilai
+   `idle = max(10, round((now - LastUserActivity) / 1000))`) **tidak boleh lagi
+   menyisipkan balasan kedua**:
+   - `CompanionViewModel._autonomousMode` bawaan kini **`false`**. Dulu `true`,
+     dan tombol NEURO-SAMA sudah dibuang dari XAML — jadi tidak ada cara
+     mematikannya dari UI, dan setiap 65 dtk hening Silver Wolf bicara sendiri.
+     Nilainya tidak tersimpan di `UiSettings`, jadi bawaan ini langsung berlaku.
+   - `CekProaktifAsync` juga menolak bicara bila gelembung terakhir yang punya
+     isi sudah `Role == "assistant"`. Pemeriksaan ini tetap berlaku walau mode
+     otonom dinyalakan lagi lewat `PancingObrolanCommand`.
 9. **Mirror disimpan ke `UiSettings`** (JSON di `LocalApplicationData\SilverWolf\`),
    **bukan** `ApplicationData.Current.LocalSettings` (lihat §7.13).
 10. **Jangan hidupkan server HTTP lagi.** `CompanionBackend` mempertahankan
@@ -1321,10 +1338,11 @@ test. Perlu satu jalan nyata yang menunjukkan "MEMUAT VULKAN…" di UI.
 3. **§8.6 — verifikasi pengenalan 503 terhadap llama-server sungguhan.**
    Kodenya sudah dikunci unit test; yang kurang satu jalan nyata yang
    menunjukkan "MEMUAT VULKAN…" di UI.
-4. **M10 — tema, blur, animasi, font.** Uji risiko variable font.
-5. **M12 — tray, hotkey, single-instance, close-to-tray.**
-6. **M13 — integrasi end-to-end.**
-7. **M14 — rilis.**
+4. **M14 — rilis.**
+
+**DIBATALKAN 2026-10-09 atas keputusan Master — jangan dikerjakan:**
+M10 (tema, blur, animasi, font), M12 (tray, hotkey, single-instance,
+close-to-tray), M13 (integrasi end-to-end).
 
 ---
 

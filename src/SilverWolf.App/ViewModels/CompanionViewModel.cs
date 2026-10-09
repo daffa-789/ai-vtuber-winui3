@@ -83,7 +83,23 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
     private bool _isSending;
     private bool _suaraSibuk;
     private string _expression = "netral";
-    private bool _autonomousMode = true;
+    /// <summary>
+    /// Mode otonom (Neuro-sama). **Bawaan = mati sejak 2026-10-09.**
+    ///
+    /// <para>
+    /// Dulu <c>true</c>, dan tombol NEURO-SAMA sudah dibuang dari XAML atas
+    /// permintaan Master — jadi tidak ada lagi cara mematikannya dari UI.
+    /// Akibatnya setiap 65 dtk hening Silver Wolf berbicara sendiri, dan Master
+    /// melihat satu percakapan "dibalas dua kali".
+    /// </para>
+    /// <para>
+    /// Nilai ini TIDAK tersimpan di <c>UiSettings</c>, jadi mengubah bawaan di
+    /// sini langsung berlaku. Tombol bisa dipasang kembali kapan saja lewat
+    /// <c>PancingObrolanCommand</c> — kalaupun dinyalakan lagi, pemeriksaan di
+    /// <see cref="CekProaktifAsync"/> mencegah dua balasan berturut-turut.
+    /// </para>
+    /// </summary>
+    private bool _autonomousMode = false;
     private bool _suaraAktif = true;
     private bool _mirrorTrack;
     private DateTimeOffset _lastUserActivity = DateTimeOffset.Now;
@@ -655,6 +671,28 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
         if (!AutonomousMode || IsSending || SuaraSibuk)
         {
             return;
+        }
+
+        // Satu percakapan = satu balasan. Kalau balasan terakhir yang punya isi
+        // sudah dari asisten, jangan menambah balasan lagi.
+        //
+        // Inilah sumber keluhan Master: ia meninggalkan jendela, pekerja
+        // proaktif lalu menyisipkan satu balasan baru di ATAS balasan yang
+        // sudah ada, sehingga terlihat seperti satu pesan dibalas dua kali.
+        for (var i = Messages.Count - 1; i >= 0; i--)
+        {
+            var b = Messages[i];
+            if (string.IsNullOrWhiteSpace(b.Content))
+            {
+                continue;
+            }
+
+            if (b.Role == "assistant")
+            {
+                return;
+            }
+
+            break;
         }
 
         var hening = DateTimeOffset.Now - LastUserActivity;
