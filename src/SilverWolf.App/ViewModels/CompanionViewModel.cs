@@ -57,6 +57,8 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
     private CancellationTokenSource _cts = new();
     private SilverWolf.Services.Tts.TtsPipeline? _tts;
     private float _levelSuara;
+    private int _jumlahLevel;
+    private float _puncakLevel;
     private string? _alasanSuaraHening;
     private long _versiSuara;
 
@@ -214,8 +216,40 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
     public float LevelSuara
     {
         get => _levelSuara;
-        private set => SetProperty(ref _levelSuara, value);
+        private set
+        {
+            if (!SetProperty(ref _levelSuara, value))
+            {
+                return;
+            }
+
+            // Diagnostik murah: berapa kali level benar-benar sampai dan
+            // setinggi apa. Tanpa ini, "mulut tidak bergerak" tidak bisa
+            // dipisahkan antara (a) tidak ada audio yang diputar, (b) audio
+            // diputar tetapi level tidak pernah dikirim, atau (c) level
+            // dikirim tetapi nilainya selalu nol. Ketiganya terlihat sama
+            // dari luar — persis keluhan Master.
+            _jumlahLevel++;
+            if (value > _puncakLevel) _puncakLevel = value;
+
+            // Dicatat tiap ~0,5 dtk supaya tidak membanjiri crash.log pada
+            // 60 laporan per detik, tetapi tetap memberi jejak yang terbaca.
+            if (_jumlahLevel == 1 || _jumlahLevel % 30 == 0)
+            {
+                CrashLog.Tahap($"lipsync: level#{_jumlahLevel} kini={value:F3} puncak={_puncakLevel:F3}");
+            }
+        }
     }
+
+    /// <summary>
+    /// Ringkasan jalur LipSync untuk ditampilkan di UI. Membuat "mulut diam"
+    /// bisa dibedakan: "tidak ada suara", "suara jalan tapi level nol", atau
+    /// "level ada tetapi panggung belum siap".
+    /// </summary>
+    public string TeksMulut =>
+        _jumlahLevel == 0
+            ? "mulut: belum ada level suara"
+            : $"mulut: {_jumlahLevel} level, puncak {_puncakLevel:F2}";
 
     /// <summary>Alasan suara tidak keluar; <c>null</c> kalau tidak ada masalah.</summary>
     public string? AlasanSuaraHening
@@ -744,6 +778,9 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
             {
                 gelembung.TeksMemuat = "sedang menyiapkan suara…";
                 SuaraSibuk = true;
+                // Mulai hitung ulang per gelembung, supaya angka diagnostik
+                // LipSync yang tercatat memang milik balasan ini.
+                var levelSebelum = _jumlahLevel;
                 try
                 {
                     // Seluruh kalimat disintesis dulu sebelum ada suara, jadi
@@ -770,6 +807,13 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
                         // boleh mereset state ucapan baru. Tidak memakai timeout
                         // palsu lima menit untuk menandai ucapan sudah selesai.
                         _ = PantauSuaraAsync(tts.Penyelesaian, versiSuara);
+
+                        // Diagnostik LipSync: audio SUDAH mulai diputar, jadi
+                        // seharusnya level mengalir. Kalau tidak ada satu pun
+                        // level yang sampai, mulut akan diam walau suaranya
+                        // terdengar — dan itu persis keluhan Master. Dicatat
+                        // supaya bisa dibedakan dari "memang tidak ada suara".
+                        _ = LaporkanMulutAsync(levelSebelum, versiSuara);
                     }
                     else
                     {
@@ -829,6 +873,54 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
                 LevelSuara = 0f;
             });
         }
+    }
+
+    /// <summary>
+    /// Setelah pemutaran selesai, laporkan berapa level LipSync yang benar-benar
+    /// sampai selama balasan ini.
+    ///
+    /// <para>
+    /// <b>Kenapa ini perlu ada.</b> "Mulut tidak bergerak" punya tiga sebab yang
+    /// dari luar terlihat identik:
+    /// </para>
+    /// <list type="number">
+    /// <item><description>Tidak ada audio yang diputar sama sekali — mulut
+    /// memang tidak punya apa pun untuk diikuti.</description></item>
+    /// <item><description>Audio diputar, tetapi <c>LevelBerubah</c> tidak pernah
+    /// menyala (pemutar tersangkut, berkas tidak terbaca).</description></item>
+    /// <item><description>Level mengalir tetapi nilainya selalu nol (berkas
+    /// hening, atau normalisasi gagal).</description></item>
+    /// </list>
+    /// <para>
+    /// Angka ini memisahkan ketiganya tanpa perlu debugger, dan tanpa memaksa
+    /// Master menebak-nebak.
+    /// </para>
+    /// </summary>
+    private async Task LaporkanMulutAsync(int levelSebelum, long versiSuara)
+    {
+        // Beri waktu pemutaran benar-benar berjalan sebelum menyimpulkan.
+        try { await Task.Delay(1500).ConfigureAwait(false); }
+        catch (Exception) { return; }
+
+        _dispatcher?.TryEnqueue(() =>
+        {
+            if (_sedangDibuang || versiSuara != _versiSuara) return;
+
+            var baru = _jumlahLevel - levelSebelum;
+            if (baru <= 0)
+            {
+                // Suara sudah mulai diputar tetapi tidak ada level yang sampai:
+                // inilah yang membuat mulut diam walau speaker berbunyi.
+                CrashLog.Tahap("lipsync: TIDAK ada level yang sampai walau audio sudah mulai — mulut akan diam");
+                AlasanSuaraHening =
+                    "Suara diputar tetapi data amplitudo tidak mengalir; mulut tidak bisa bergerak. Lihat crash.log.";
+                OnPropertyChanged(nameof(TeksMulut));
+                return;
+            }
+
+            CrashLog.Tahap($"lipsync: {baru} level sampai selama balasan ini, puncak={_puncakLevel:F3}");
+            OnPropertyChanged(nameof(TeksMulut));
+        });
     }
 
 
