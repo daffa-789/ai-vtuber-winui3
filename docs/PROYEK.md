@@ -1207,19 +1207,14 @@ langkah wajib dilaporkan sebagai **rasio**, mis. "lolos 4/5"):
 3. Masih mati → `VTUBER_LLM_PROVIDER=local` (`-ngl 0`). Ini yang membuat #29786
    selesai, dan sejalan dengan catatan lama bahwa jalur CPU tidak pernah mati.
 
-**Cara mengulang riset ini.** Unduhan Chromium bawaan `agent-browser` **gagal**
-di jaringan ini (198 MB, tiga kali percobaan, `operation timed out`). Yang
-berhasil: pakai Chromium milik Playwright yang sudah ada —
+**Cara mengulang riset ini.** Cukup buka daftar isu
+`ggml-org/llama.cpp` di peramban dan cari `vulkan`, `gemma4`, `crash` —
+hasilnya tersimpan di `outputs/riset-8.1*.txt`. Pencarian isu GitHub butuh
+peramban sungguhan (daftarnya dirender di sisi klien), jadi ambil dari berkas
+tersimpan dulu sebelum membuka ulang.
 
-```bash
-export PLAYWRIGHT_BROWSERS_PATH="C:/Users/Daffa/AppData/Local/ms-playwright"
-agent-browser open "https://github.com/ggml-org/llama.cpp/issues?q=..."
-agent-browser wait --load load      # JANGAN networkidle — GitHub tidak pernah idle
-agent-browser snapshot
-agent-browser close                 # wajib, supaya daemon tidak menumpuk
-```
-
-Hasilnya tersimpan di `outputs/riset-8.1*.txt`.
+> Catatan untuk sesi berikutnya: proyek ini **murni C# + C++**. Jangan bawa
+> perkakas JS/npm ke sini, dan jangan menuliskannya ke catatan proyek.
 
 ### 8.2 🟡 LipSync belum ada
 
