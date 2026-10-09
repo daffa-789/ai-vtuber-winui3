@@ -5,18 +5,27 @@ Menjalankan aplikasi berkali-kali, menahan tiap jalan beberapa detik, lalu
 menyimpan `crash.log` tiap jalan ke `tools/bukti/`. Log kematian itu justru
 buktinya - jangan dihapus (pelajaran §7.19).
 
-Versi 2 (2026-10-08) - kenapa ditulis ulang dari versi bash:
+Versi 3 (2026-10-09) - yang ditambahkan, semuanya demi satu pertanyaan:
+**siapa yang mengakhiri prosesnya?**
 
-* **Exit code proses dicatat utuh 32 bit.** Bash cuma mengembalikan 8 bit
-  bawah, jadi `0xC0000602` (STATUS_FAIL_FAST_EXCEPTION) terbaca sebagai `2`
-  dan tidak bisa dibedakan dari "keluar bersih". Dua jalan yang pernah
-  berakhir `shutdown: selesai` tanpa exception (jalan-1, jalan-3) tidak bisa
-  diklasifikasikan hanya dari log; exit code menyelesaikan ambiguitas itu.
-* **Memori fisik bebas disampel selama jalan** dan nilai terendahnya disimpan.
-  Dugaan utama sejak 8 Okt adalah tekanan memori bersama (GPU terintegrasi
-  memakai RAM sistem), jadi angka ini perlu, bukan sekadar pelengkap.
-* **Nasib `llama-server` ikut dicatat.** Kalau dia ikut mati bersama aplikasi,
-  itu menguatkan dugaan reset driver; kalau hanya aplikasi yang mati, bukan.
+* **Penanda `PROSES KELUAR` dibaca.** Ini pemisah yang paling menentukan dan
+  sebelumnya terlewat. `AppDomain.ProcessExit` dipasang di `CrashLog.Pasang()`,
+  jadi:
+      ada `PROSES KELUAR`   -> CLR berhenti sendiri (Main kembali / Environment.Exit)
+      tidak ada             -> proses diakhiri dari LUAR CLR (TerminateProcess)
+  Exit code 0 pada kedua kasus terlihat sama, jadi tanpa penanda ini
+  "keluar bersih" dan "dibunuh dari luar" tidak bisa dibedakan.
+* **Baris-baris terakhir `crash.log` dicatat apa adanya.** Sebelumnya hanya
+  dicocokkan pola kasar; titik matinya justru yang paling berharga.
+* **Ukuran akhir `crash.log` dicatat.** Mode A punya tanda tangan khas:
+  beku di **13.449 bita**.
+* **Working set puncak aplikasi disampel** (ctypes, tanpa psutil) - Mode B
+  adalah soal memori, dan angka prosesnya lebih tajam daripada memori sistem.
+* **Memori sistem disampel tiap 1 dtk**, bukan 2, supaya lembahnya tertangkap.
+* **llama-server pernah hidup atau tidak** ikut dicatat. Mode C mati saat Vulkan
+  bekerja; kalau llama tidak pernah menyala sama sekali, itu petunjuk lain.
+* **Ringkasan per jalan disimpan sebagai JSON** supaya bisa dihitung ulang
+  tanpa menjalankan ulang uji.
 
 Pakai:
     python tools/uji-kematian.py [jumlah-jalan] [detik-tahan]
@@ -25,6 +34,7 @@ Contoh:
 """
 
 import ctypes
+import json
 import os
 import shutil
 import subprocess
@@ -38,6 +48,9 @@ TARGET = os.path.join(
     "net8.0-windows10.0.19041.0", "win-x64")
 EXE = os.path.join(TARGET, "SilverWolf.App.exe")
 LOGDIR = os.path.join(ROOT, "tools", "bukti")
+
+# Ukuran crash.log tempat Mode A membeku (docs/PROYEK.md §8.1).
+UKURAN_MODE_A = 13449
 
 # Exit code yang sering muncul pada mati senyap. Nilai diambil apa adanya
 # dari GetExitCodeProcess (signed 32 bit).
@@ -68,6 +81,21 @@ class MemoriSistem(ctypes.Structure):
     ]
 
 
+class PenghitungMemori(ctypes.Structure):
+    _fields_ = [
+        ("cb", ctypes.c_ulong),
+        ("PageFaultCount", ctypes.c_ulong),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
+
+
 def memori_bebas_mb():
     """Memori fisik yang masih bebas, dalam MiB."""
     m = MemoriSistem()
@@ -75,6 +103,28 @@ def memori_bebas_mb():
     if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
         return None
     return m.ullAvailPhys // (1024 * 1024)
+
+
+def working_set_mb(pid):
+    """Working set proses dalam MiB, atau None kalau tidak terbaca."""
+    if pid is None:
+        return None
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+
+    try:
+        c = PenghitungMemori()
+        c.cb = ctypes.sizeof(PenghitungMemori)
+        if not ctypes.windll.psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(c), c.cb):
+            return None
+        return c.WorkingSetSize // (1024 * 1024)
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
 
 
 def bunuh(nama):
@@ -87,6 +137,12 @@ def hidup(nama):
                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                        text=True, encoding="utf-8", errors="replace")
     return r.stdout.count(nama)
+
+
+def baris_terakhir(teks, jumlah=3):
+    """Beberapa baris 'sumber  : ...' terakhir dari crash.log."""
+    hasil = [b.strip() for b in teks.splitlines() if b.strip()]
+    return hasil[-jumlah:]
 
 
 def main():
@@ -104,6 +160,7 @@ def main():
     selamat = 0
     mati = 0
     baris = []
+    rincian = []
 
     for jalan in range(1, n + 1):
         bunuh("SilverWolf.App.exe")
@@ -121,17 +178,28 @@ def main():
                                 stdout=run_out, stderr=subprocess.STDOUT)
 
         mem_terendah = None
+        ws_puncak = None
+        llama_pernah = False
         kode = None
         while True:
             kode = proc.poll()
             if kode is not None:
                 break
+
             m = memori_bebas_mb()
             if m is not None and (mem_terendah is None or m < mem_terendah):
                 mem_terendah = m
+
+            ws = working_set_mb(proc.pid)
+            if ws is not None and (ws_puncak is None or ws > ws_puncak):
+                ws_puncak = ws
+
+            if not llama_pernah and hidup("llama-server.exe"):
+                llama_pernah = True
+
             if time.time() - mulai >= detik:
                 break
-            time.sleep(2)
+            time.sleep(1)
 
         lama = time.time() - mulai
 
@@ -150,24 +218,29 @@ def main():
         if os.path.exists(sumber):
             shutil.copyfile(sumber, tujuan)
             teks = open(sumber, encoding="utf-8", errors="replace").read()
+            ukuran = os.path.getsize(sumber)
         else:
             teks = ""
+            ukuran = 0
 
-        # Kelas penyebab: exit code dulu, baru isi log.
+        # ── Kelas penyebab ────────────────────────────────────────────────
         #
-        # Pemisah yang paling penting (ditemukan 2026-10-08): `swl2d_shutdown`
-        # HANYA dipanggil dari `MainWindow.OnClosed`. Jadi kalau log memuat
-        # baris `shutdown: selesai`, jendelanya memang DITUTUP - proses keluar
-        # teratur dengan exit 0, dan ini BUKAN kematian yang dicari §8.1.
-        # Tanpa pemisah ini, jendela yang ditutup pengguna terus terhitung
-        # sebagai crash dan mengacaukan laju kejadian.
+        # Pemisah terpenting. `swl2d_shutdown` HANYA dipanggil dari
+        # `MainWindow.OnClosed`, jadi `shutdown: selesai` berarti jendelanya
+        # memang DITUTUP - exit 0 yang teratur, BUKAN kematian §8.1.
         ditutup = "shutdown: selesai" in teks
+        # `PROSES KELUAR` ditulis AppDomain.ProcessExit. Ada = CLR berhenti
+        # sendiri; tidak ada = diakhiri dari LUAR CLR.
+        keluar_clr = "PROSES KELUAR" in teks
+
         if kode is None:
             kelas = "masih-hidup"
         elif ditutup:
             kelas = "DITUTUP-bersih(bukan-mati)"
+        elif keluar_clr:
+            kelas = "MATI-tapi-CLR-berhenti-sendiri"
         elif kode == 0:
-            kelas = "MATI-tanpa-jejak(0)"
+            kelas = "MATI-dari-LUAR-CLR(0)"
         else:
             kelas = KODE_KELUAR.get(kode, f"kode-{kode}")
 
@@ -175,20 +248,35 @@ def main():
             kelas += " +jejak-DisposeAsync"
         if "tipe    :" in teks:
             kelas += " +exception-tercatat"
+        if ukuran == UKURAN_MODE_A:
+            kelas += " +TANDA-MODE-A"
 
-        # Di mana log berhenti - penanda terakhir yang paling berguna.
-        jejak = ""
-        for pola in ("[llama]", "[swl2d]", "TAHAP: runtime:", "TAHAP: live2d:"):
-            if pola in teks:
-                jejak = pola
-        llama = hidup("llama-server.exe")
+        akhir = baris_terakhir(teks)
+        jejak = " | ".join(a.replace("sumber  : ", "")[:58] for a in akhir)
 
         nama_kode = "-" if kode is None else str(kode)
         ringkas = (f"jalan {jalan}/{n}: {status:20s} | kode={nama_kode:>12s} | "
-                   f"RAM bebas min={mem_terendah}MiB | llama={llama} | "
-                   f"{kelas} | log berakhir: {jejak or '-'}")
+                   f"RAM min={mem_terendah}MiB | ws puncak={ws_puncak}MiB | "
+                   f"llama={'pernah' if llama_pernah else 'tidak'} | "
+                   f"log={ukuran}B | {kelas}")
         print(ringkas, flush=True)
+        print(f"           akhir: {jejak or '-'}", flush=True)
         baris.append(ringkas)
+
+        rincian.append({
+            "jalan": jalan,
+            "status": status,
+            "kode_keluar": kode,
+            "lama_detik": round(lama, 1),
+            "ram_bebas_terendah_mib": mem_terendah,
+            "working_set_puncak_mib": ws_puncak,
+            "llama_pernah_hidup": llama_pernah,
+            "ukuran_crash_log": ukuran,
+            "ditutup_bersih": ditutup,
+            "proses_keluar_clr": keluar_clr,
+            "kelas": kelas,
+            "baris_terakhir": akhir,
+        })
 
         with open(os.path.join(LOGDIR, "ringkasan-uji.txt"), "w",
                   encoding="utf-8") as f:
@@ -197,6 +285,10 @@ def main():
             f.write("\n".join(baris) + "\n")
             f.write("-" * 78 + "\n")
             f.write(f"HASIL: selamat={selamat} mati={mati} dari {n} jalan\n")
+
+        with open(os.path.join(LOGDIR, "ringkasan-uji.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump(rincian, f, indent=2, ensure_ascii=False)
 
     bunuh("SilverWolf.App.exe")
     bunuh("llama-server.exe")
