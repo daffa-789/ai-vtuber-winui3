@@ -419,6 +419,26 @@ Diambil 2026-10-07 dengan menjalankan server Node asli mode stub
    **bukan** `ApplicationData.Current.LocalSettings` (lihat §7.13).
 10. **Jangan hidupkan server HTTP lagi.** `CompanionBackend` mempertahankan
     *kontrak* HTTP, bukan soketnya.
+11. **SELURUH balasan disintesis dulu, baru diputar** (dikunci 2026-10-09).
+    Kalimat tidak lagi diputar sambil kalimat berikutnya disintesis. Alasannya
+    aritmetika, bukan selera: RVC di CPU butuh **6–13 dtk per kalimat** sedangkan
+    audionya hanya **2–3 dtk**, jadi pemutar selalu kehabisan bahan dan diam di
+    setiap tanda baca — keluhan Master "dia ngomong setengah-setengah".
+    Konsekuensinya **waktu tunggu sebelum suara pertama lebih panjang**, dan itu
+    disengaja. Karena itu pula ada `progres` (selesai/total) di
+    `SiapkanDanPutarAsync` — UI menampilkan "menyiapkan suara… (2/3)" supaya
+    gelembung tidak tampak menggantung.
+12. **Hasil sintesis digabung menjadi SATU WAV** (`GabungWav`) sebelum diputar:
+    satu kali buka perangkat audio per balasan, bukan sekali per kalimat.
+    Penggabungan hanya sah bila chunk `fmt ` identik; kalau tidak, fungsi
+    mengembalikan `null` dan pemanggil memutar berurutan — **jeda lebih baik
+    daripada suara rusak**. Sudah diverifikasi terhadap 50 WAV RVC nyata
+    (semuanya PCM mono 40 kHz, `fmt ` 16 bita, tanpa chunk tambahan).
+13. **Kepala gelembung memakai `ChatBubble.NamaPeran`, bukan `Role`.**
+    `Role` adalah nilai protokol (`"user"`/`"assistant"`) yang dibaca
+    `rapikanRiwayat` dan **harus tetap apa adanya**; yang tampil ke Master adalah
+    "Silver Wolf". Menampilkan kata mentah `assistant` terasa seperti bocoran
+    kode ke antarmuka.
 
 ---
 

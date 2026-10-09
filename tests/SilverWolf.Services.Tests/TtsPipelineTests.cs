@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using SilverWolf.Services.Tts;
 using Xunit;
 
@@ -10,43 +11,103 @@ public sealed class TtsPipelineTests
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
 
-    [Fact]
-    public async Task FirstPlaybackDoesNotWaitForSecondSynthesis()
+    /// <summary>
+    /// Membuat WAV PCM kecil yang benar-benar ada di disk.
+    ///
+    /// <para>
+    /// Berkasnya harus nyata: penggabungan membaca header <c>fmt </c>/<c>data</c>
+    /// dari disk, jadi jalur palsu akan membuat penggabungan menyerah dan
+    /// pemutaran jatuh ke jalur berurutan — persis yang tidak ingin diuji.
+    /// </para>
+    /// </summary>
+    private static string WavSementara(int sampel)
     {
-        var secondEntered = Signal();
-        var releaseSecond = Signal();
-        var releasePlayback = Signal();
-        var played = new ConcurrentQueue<string>();
-        using var pipeline = new TtsPipeline(async (text, ct) =>
+        var jalur = Path.Combine(Path.GetTempPath(), $"uji-tts-{Guid.NewGuid():N}.wav");
+        var data = new byte[sampel * 2];
+        using var aliran = File.Create(jalur);
+        using var tulis = new BinaryWriter(aliran, Encoding.ASCII);
+        tulis.Write(Encoding.ASCII.GetBytes("RIFF"));
+        tulis.Write(36 + data.Length);
+        tulis.Write(Encoding.ASCII.GetBytes("WAVE"));
+        tulis.Write(Encoding.ASCII.GetBytes("fmt "));
+        tulis.Write(16);
+        tulis.Write((short)1);            // PCM
+        tulis.Write((short)1);            // mono
+        tulis.Write(40_000);              // laju sampel
+        tulis.Write(40_000 * 2);          // laju bita
+        tulis.Write((short)2);            // perataan blok
+        tulis.Write((short)16);           // bit per sampel
+        tulis.Write(Encoding.ASCII.GetBytes("data"));
+        tulis.Write(data.Length);
+        tulis.Write(data);
+        return jalur;
+    }
+
+    [Fact]
+    public async Task WholeReplyIsSynthesizedBeforeAnyPlayback()
+    {
+        // Kontrak 2026-10-09. Sintesis jauh lebih lambat daripada pemutaran
+        // (RVC di CPU 6-13 dtk per kalimat, audionya 2-3 dtk), jadi memutar
+        // sambil menyintesis membuat pemutar kehabisan bahan dan diam di setiap
+        // tanda baca. Seluruh kalimat harus selesai dulu, lalu digabung menjadi
+        // SATU berkas supaya perangkat audio hanya dibuka sekali.
+        var disintesis = new ConcurrentQueue<string>();
+        var diputar = new ConcurrentQueue<string>();
+        var dibuat = new List<string>();
+
+        using var pipeline = new TtsPipeline((text, _) =>
         {
-            if (text.StartsWith("Kalimat kedua"))
-            {
-                secondEntered.TrySetResult(true);
-                await releaseSecond.Task.WaitAsync(ct);
-            }
-            return text;
-        }, async (wav, ct, started) =>
+            var wav = WavSementara(800);
+            lock (dibuat) dibuat.Add(wav);
+            disintesis.Enqueue(text);
+            return Task.FromResult<string?>(wav);
+        }, (wav, _, started) =>
         {
-            played.Enqueue(wav);
+            // Pemutaran pertama hanya boleh mulai setelah KEDUA kalimat selesai.
+            Assert.Equal(2, disintesis.Count);
+            diputar.Enqueue(wav);
             started();
-            if (wav.StartsWith("Kalimat pertama"))
-                await releasePlayback.Task.WaitAsync(ct);
-            return true;
+            return Task.FromResult(true);
         });
+
         try
         {
             Assert.True(await pipeline.SiapkanDanPutarAsync(
                 "Kalimat pertama selesai. Kalimat kedua selesai.").WaitAsync(Limit));
-            await secondEntered.Task.WaitAsync(Limit);
-            Assert.True(pipeline.Sibuk);
-            Assert.Single(played);
-            releaseSecond.TrySetResult(true);
-            releasePlayback.TrySetResult(true);
             await pipeline.Penyelesaian.WaitAsync(Limit);
-            Assert.Equal(2, played.Count);
+
+            Assert.Equal(2, disintesis.Count);
+            Assert.Single(diputar);
             Assert.False(pipeline.Sibuk);
         }
-        finally { releaseSecond.TrySetResult(true); releasePlayback.TrySetResult(true); }
+        finally
+        {
+            lock (dibuat)
+            {
+                foreach (var jalur in dibuat)
+                {
+                    try { File.Delete(jalur); } catch (IOException) { }
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ProgressIsReportedPerSentence()
+    {
+        // UI memakai ini untuk menampilkan "menyiapkan suara… (2/3)"; tanpa
+        // laporan kemajuan gelembung tampak menggantung selama seluruh sintesis.
+        var laporan = new ConcurrentQueue<(int Selesai, int Total)>();
+        using var pipeline = new TtsPipeline(
+            (text, _) => Task.FromResult<string?>(text),
+            (_, _, started) => { started(); return Task.FromResult(true); });
+
+        await pipeline.SiapkanDanPutarAsync(
+            "Satu selesai. Dua selesai. Tiga selesai.",
+            progres: (selesai, total) => laporan.Enqueue((selesai, total))).WaitAsync(Limit);
+        await pipeline.Penyelesaian.WaitAsync(Limit);
+
+        Assert.Equal(new[] { (1, 3), (2, 3), (3, 3) }, laporan.ToArray());
     }
 
     [Fact]

@@ -26,6 +26,19 @@ public sealed class ChatBubble : ObservableObject
     /// <summary>"user" | "assistant" — nilai yang dikenal <c>rapikanRiwayat</c>.</summary>
     public string Role { get; init; } = "user";
 
+    /// <summary>
+    /// Nama yang DITAMPILKAN di kepala gelembung.
+    ///
+    /// <para>
+    /// Terpisah dari <see cref="Role"/> dengan sengaja: <c>Role</c> adalah nilai
+    /// protokol yang dibaca <c>rapikanRiwayat</c> dan harus tetap
+    /// <c>"assistant"</c>, sedangkan yang dibaca Master cukup "Silver Wolf".
+    /// Menampilkan kata mentah <c>assistant</c> terasa seperti bocoran kode ke
+    /// antarmuka — keluhan Master 2026-10-09.
+    /// </para>
+    /// </summary>
+    public string NamaPeran => Role == "assistant" ? "Silver Wolf" : Role;
+
     public string Content
     {
         get => _content;

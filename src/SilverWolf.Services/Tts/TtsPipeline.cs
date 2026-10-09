@@ -1,12 +1,22 @@
-using System.Threading.Channels;
 using SilverWolf.Core.Configuration;
 using SilverWolf.Core.Text;
 
 namespace SilverWolf.Services.Tts;
 
 /// <summary>
-/// Sintesis satu kalimat pada satu waktu, dengan antrean WAV terbatas.
-/// Pemutaran kalimat pertama dapat bertumpang tindih dengan sintesis berikutnya.
+/// Sintesis satu kalimat pada satu waktu, lalu SELURUH hasilnya diputar sebagai
+/// satu berkas.
+///
+/// <para>
+/// <b>Kenapa tidak diputar sambil disintesis.</b> Sintesis jauh lebih lambat
+/// daripada pemutaran (RVC di CPU: 6–13 dtk per kalimat, audionya 2–3 dtk).
+/// Memutar sambil menyintesis membuat pemutar selalu kehabisan bahan dan diam
+/// di setiap tanda baca, sehingga ucapan terdengar setengah-setengah. Karena
+/// itu seluruh kalimat disintesis dulu, digabung menjadi satu WAV, baru
+/// diputar — konsekuensinya waktu tunggu sebelum suara pertama lebih panjang,
+/// dan itu disengaja.
+/// </para>
+///
 /// Setiap ucapan dilacak sejak persiapan sampai pemutaran terakhir selesai.
 /// </summary>
 public sealed class TtsPipeline : IDisposable
@@ -75,23 +85,38 @@ public sealed class TtsPipeline : IDisposable
 
     public async Task UcapkanAsync(string teks, CancellationToken ct = default)
     {
-        var ucapan = await MulaiAsync(teks, ct).ConfigureAwait(false);
+        var ucapan = await MulaiAsync(teks, ct, null).ConfigureAwait(false);
         await ucapan.Selesai.ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Kembali setelah perangkat menerima Play() untuk WAV pertama yang bisa
-    /// diputar. Ini bukan bukti bahwa speaker pengguna terdengar. Kembali false
-    /// bila tidak ada audio yang dapat dimulai; pembatalan tetap dilempar.
+    /// Kembali setelah perangkat menerima Play() untuk WAV yang bisa diputar.
+    /// Ini bukan bukti bahwa speaker pengguna terdengar. Kembali false bila tidak
+    /// ada audio yang dapat dimulai; pembatalan tetap dilempar.
+    ///
+    /// <para>
+    /// <b>Perubahan 2026-10-09:</b> SELURUH kalimat disintesis lebih dulu, baru
+    /// diputar sebagai satu berkas. Sebelumnya kalimat pertama diputar sambil
+    /// kalimat berikutnya disintesis — dan karena sintesis (6–13 dtk) jauh lebih
+    /// lambat daripada pemutaran (2–3 dtk), pemutar selalu kehabisan bahan dan
+    /// berhenti di setiap tanda baca. Konsekuensinya waktu tunggu sebelum suara
+    /// pertama memang lebih panjang; itu ditukar dengan ucapan yang mengalir
+    /// tanpa jeda.
+    /// </para>
     /// </summary>
-    public async Task<bool> SiapkanDanPutarAsync(string teks, CancellationToken ct = default)
+    /// <param name="progres">
+    /// Dipanggil setiap satu kalimat selesai disintesis: (selesai, total).
+    /// Dipakai UI untuk menunjukkan kemajuan, bukan indikator waktu.
+    /// </param>
+    public async Task<bool> SiapkanDanPutarAsync(
+        string teks, CancellationToken ct = default, Action<int, int>? progres = null)
     {
-        var ucapan = await MulaiAsync(teks, ct).ConfigureAwait(false);
+        var ucapan = await MulaiAsync(teks, ct, progres).ConfigureAwait(false);
         return await ucapan.Siap.ConfigureAwait(false);
     }
 
     private async Task<(Task<bool> Siap, Task Selesai)> MulaiAsync(
-        string teks, CancellationToken ct)
+        string teks, CancellationToken ct, Action<int, int>? progres)
     {
         ct.ThrowIfCancellationRequested();
         await _mulai.WaitAsync(ct).ConfigureAwait(false);
@@ -113,7 +138,7 @@ public sealed class TtsPipeline : IDisposable
                     TaskCreationOptions.RunContinuationsAsynchronously);
                 _cts = lokal;
                 // Publikasikan tugas sebelum pekerjaan mulai; cache hit pun dilacak.
-                _tugas = Task.Run(() => JalankanAsync(teks, lokal, siap));
+                _tugas = Task.Run(() => JalankanAsync(teks, lokal, siap, progres));
                 return (siap.Task, _tugas);
             }
         }
@@ -124,22 +149,102 @@ public sealed class TtsPipeline : IDisposable
     }
 
     private async Task JalankanAsync(
-        string teks, CancellationTokenSource lokal, TaskCompletionSource<bool> siap)
+        string teks, CancellationTokenSource lokal, TaskCompletionSource<bool> siap,
+        Action<int, int>? progres)
     {
         var ct = lokal.Token;
-        // Maksimal satu WAV menunggu; tidak menumpuk seluruh balasan di memori.
-        var antrean = Channel.CreateBounded<string>(new BoundedChannelOptions(1)
-        {
-            SingleReader = true,
-            SingleWriter = true,
-            FullMode = BoundedChannelFullMode.Wait,
-        });
         using var daftar = ct.Register(() => siap.TrySetCanceled(ct));
         try
         {
-            await Task.WhenAll(
-                HasilkanAsync(teks, antrean.Writer, ct),
-                PutarAsync(antrean.Reader, siap, ct)).ConfigureAwait(false);
+            var potong = SentenceSplitter.PotongKalimat(teks);
+            if (!string.IsNullOrWhiteSpace(potong.Sisa)) potong.Kalimat.Add(potong.Sisa);
+
+            // ── Seluruh kalimat disintesis DULU, baru diputar ────────────────
+            // Sintesis jauh lebih lambat daripada pemutaran (RVC di CPU 6–13 dtk
+            // per kalimat, audionya hanya 2–3 dtk). Memutar sambil menyintesis
+            // membuat pemutar selalu kehabisan bahan dan berhenti di setiap tanda
+            // baca — itulah "dia ngomong setengah-setengah" yang dikeluhkan
+            // Master. Menyintesis semuanya dulu menghapus jeda itu.
+            var wavs = new List<string>();
+            var total = potong.Kalimat.Count;
+            var selesai = 0;
+            foreach (var kalimat in potong.Kalimat)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var wav = await _hasilkan(kalimat, ct).ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
+                    if (wav is not null)
+                    {
+                        wavs.Add(wav);
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception galat)
+                {
+                    _log?.Invoke($"[tts] kalimat gagal disiapkan: {galat.Message}");
+                }
+
+                selesai++;
+                LaporProgres(progres, selesai, total);
+            }
+
+            if (wavs.Count == 0)
+            {
+                // Tidak ada satu pun WAV: biarkan finally menandai tidak siap.
+                return;
+            }
+
+            // Gabung menjadi satu berkas. Kalau formatnya ternyata tidak seragam,
+            // pemanggil jatuh ke pemutaran berurutan — lebih baik ada jeda
+            // daripada tidak ada suara sama sekali.
+            var gabung = GabungWav.Gabungkan(wavs, Path.GetTempPath());
+            if (gabung is null)
+            {
+                _log?.Invoke($"[tts] {wavs.Count} WAV tidak bisa digabung; diputar berurutan");
+            }
+            else if (wavs.Count > 1)
+            {
+                _log?.Invoke($"[tts] {wavs.Count} kalimat digabung menjadi satu berkas");
+            }
+
+            try
+            {
+                var berkasPutar = gabung is null ? wavs : new List<string> { gabung };
+                foreach (var wav in berkasPutar)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var berhasil = await _putar(wav, ct, () =>
+                        {
+                            if (!ct.IsCancellationRequested) siap.TrySetResult(true);
+                        }).ConfigureAwait(false);
+                        if (!berhasil && !ct.IsCancellationRequested)
+                            _log?.Invoke("[tts] satu berkas gagal diputar; lanjut berikutnya");
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception galat)
+                    {
+                        _log?.Invoke($"[tts] berkas gagal diputar: {galat.Message}");
+                    }
+                }
+            }
+            finally
+            {
+                // Berkas gabungan hanya perantara; WAV aslinya tetap di cache.
+                if (gabung is not null)
+                {
+                    try { File.Delete(gabung); } catch (IOException) { }
+                }
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -157,68 +262,30 @@ public sealed class TtsPipeline : IDisposable
             {
                 if (ReferenceEquals(_cts, lokal)) _cts = null;
             }
-            // Registrasi dan CTS baru dibuang setelah produsen/konsumen selesai.
+            // Registrasi dan CTS baru dibuang setelah seluruh pekerjaan selesai.
             daftar.Dispose();
             lokal.Dispose();
         }
     }
 
-    private async Task HasilkanAsync(
-        string teks, ChannelWriter<string> antrean, CancellationToken ct)
+    /// <summary>
+    /// Laporkan kemajuan tanpa membiarkan galat UI menggagalkan sintesis.
+    /// Pemanggil bertanggung jawab memindahkannya ke utas UI.
+    /// </summary>
+    private void LaporProgres(Action<int, int>? progres, int selesai, int total)
     {
+        if (progres is null)
+        {
+            return;
+        }
+
         try
         {
-            var potong = SentenceSplitter.PotongKalimat(teks);
-            if (!string.IsNullOrWhiteSpace(potong.Sisa)) potong.Kalimat.Add(potong.Sisa);
-            foreach (var kalimat in potong.Kalimat)
-            {
-                ct.ThrowIfCancellationRequested();
-                try
-                {
-                    var wav = await _hasilkan(kalimat, ct).ConfigureAwait(false);
-                    ct.ThrowIfCancellationRequested();
-                    if (wav is not null)
-                        await antrean.WriteAsync(wav, ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception galat)
-                {
-                    _log?.Invoke($"[tts] kalimat gagal disiapkan: {galat.Message}");
-                }
-            }
+            progres(selesai, total);
         }
-        finally
+        catch (Exception galat)
         {
-            antrean.TryComplete();
-        }
-    }
-
-    private async Task PutarAsync(
-        ChannelReader<string> antrean, TaskCompletionSource<bool> siap, CancellationToken ct)
-    {
-        await foreach (var wav in antrean.ReadAllAsync(ct).ConfigureAwait(false))
-        {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                var berhasil = await _putar(wav, ct, () =>
-                {
-                    if (!ct.IsCancellationRequested) siap.TrySetResult(true);
-                }).ConfigureAwait(false);
-                if (!berhasil && !ct.IsCancellationRequested)
-                    _log?.Invoke("[tts] satu kalimat gagal diputar; lanjut kalimat berikutnya");
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception galat)
-            {
-                _log?.Invoke($"[tts] kalimat gagal diputar: {galat.Message}");
-            }
+            _log?.Invoke($"[tts] laporan kemajuan gagal: {galat.Message}");
         }
     }
 

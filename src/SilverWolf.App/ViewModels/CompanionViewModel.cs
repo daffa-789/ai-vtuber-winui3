@@ -746,7 +746,21 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
                 SuaraSibuk = true;
                 try
                 {
-                    var siap = await tts.SiapkanDanPutarAsync(teks, ct);
+                    // Seluruh kalimat disintesis dulu sebelum ada suara, jadi
+                    // gelembung harus menunjukkan kemajuan — tanpa ini Master
+                    // melihat "sedang menyiapkan suara…" yang tampak menggantung.
+                    // Callback datang dari utas pekerja, jadi wajib dipindah ke
+                    // utas UI sebelum menyentuh properti terikat.
+                    var siap = await tts.SiapkanDanPutarAsync(teks, ct, (selesai, total) =>
+                    {
+                        _dispatcher?.TryEnqueue(() =>
+                        {
+                            if (_sedangDibuang || versiSuara != _versiSuara) return;
+                            gelembung.TeksMemuat = total > 1
+                                ? $"sedang menyiapkan suara… ({selesai}/{total})"
+                                : "sedang menyiapkan suara…";
+                        });
+                    });
                     ct.ThrowIfCancellationRequested();
                     if (siap)
                     {

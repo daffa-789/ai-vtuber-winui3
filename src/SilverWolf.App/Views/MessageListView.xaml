@@ -37,8 +37,9 @@
                         CornerRadius="8"
                         Background="#FF131A26">
                         <StackPanel Spacing="4">
+                            <!-- NamaPeran, bukan Role: "assistant" bocor ke layar. -->
                             <TextBlock
-                                Text="{Binding Role}"
+                                Text="{Binding NamaPeran}"
                                 FontSize="11"
                                 Foreground="#FF64748B" />
 
