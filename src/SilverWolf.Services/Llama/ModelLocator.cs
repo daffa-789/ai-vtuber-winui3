@@ -98,6 +98,133 @@ public static class ModelLocator
             : Path.GetFileNameWithoutExtension(berkas);
     }
 
+    /// <summary>
+    /// Ubah jalur absolut menjadi jalur relatif terhadap <see cref="AppConfig.Akar"/>.
+    /// Mengembalikan jalur apa adanya bila tidak berada di bawah akar.
+    ///
+    /// <para>
+    /// Preferensi model disimpan dalam bentuk relatif agar tetap berlaku
+    /// sekalipun folder proyek dipindah atau disalin ke mesin lain — menyimpan
+    /// <c>C:\Users\...\model\foo.gguf</c> akan langsung basi begitu jalurnya
+    /// bergeser sedikit saja.
+    /// </para>
+    /// </summary>
+    public static string Relatif(AppConfig k, string absolut)
+    {
+        if (string.IsNullOrWhiteSpace(absolut))
+        {
+            return absolut;
+        }
+
+        try
+        {
+            var penuh = Path.GetFullPath(absolut);
+            var akar = Path.GetFullPath(k.Akar).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            if (!penuh.StartsWith(akar + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return absolut;
+            }
+
+            var rel = penuh[(akar.Length + 1)..];
+            return rel.Replace(Path.DirectorySeparatorChar, '/');
+        }
+        catch (ArgumentException)
+        {
+            return absolut;
+        }
+        catch (PathTooLongException)
+        {
+            return absolut;
+        }
+        catch (NotSupportedException)
+        {
+            return absolut;
+        }
+    }
+
+    /// <summary>
+    /// Kebalikan <see cref="Relatif"/>: jalur relatif (atau absolut) menjadi
+    /// jalur absolut. Tidak memeriksa keberadaan berkas — pemanggil yang
+    /// memutuskan.
+    /// </summary>
+    public static string Absolut(AppConfig k, string relatif) =>
+        Path.IsPathRooted(relatif) ? relatif : Path.GetFullPath(Path.Combine(k.Akar, relatif));
+
+    /// <summary>
+    /// Pilihan model yang bisa ditawarkan ke pengguna. Berbeda dari
+    /// <see cref="DaftarModel"/>: yang ini selalu menyertakan model yang sedang
+    /// dipakai sekalipun berkasnya sudah dipindah, supaya ComboBox tidak pernah
+    /// kehilangan pilihan aktifnya.
+    /// </summary>
+    public static List<string> Pilihan(AppConfig k)
+    {
+        var hasil = new List<string>();
+        var terlihat = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Penyebab duplikat yang nyata: model yang dipilih lewat .env masuk
+        // sebagai "<akar>\model/nama.gguf" (Path.Combine mempertahankan '/'),
+        // sedangkan hasil pemindaian disk berbentuk "<akar>\model\nama.gguf".
+        // Keduanya berkas yang sama, tapi bukan string yang sama — ComboBox
+        // akan menampilkannya dua kali. Karena itu semua jalur dinormalisasi
+        // lebih dulu.
+        foreach (var jalur in DaftarModel(k))
+        {
+            var norm = Normal(jalur);
+            if (terlihat.Add(norm))
+            {
+                hasil.Add(norm);
+            }
+        }
+
+        var aktif = Absolut(k, k.LocalModelPath);
+        if (aktif.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
+        {
+            var norm = Normal(aktif);
+            if (terlihat.Add(norm))
+            {
+                hasil.Add(norm);
+            }
+        }
+
+        // Urutan HARUS sama dengan DaftarModel: menurut nama berkas. Diurutkan
+        // Ordinal (bukan OrdinalIgnoreCase) supaya huruf besar/kecil tidak
+        // membuat urutan bergantung lokal mesin.
+        return [.. hasil.OrderBy(
+            f => Path.GetFileName(f).ToLowerInvariant(), StringComparer.Ordinal)];
+    }
+
+    /// <summary>
+    /// Bentuk kanonik sebuah jalur, supaya dua jalur yang menunjuk berkas sama
+    /// bisa dibandingkan sebagai string. Mengembalikan input apa adanya bila
+    /// jalurnya tidak valid — lebih baik tampil apa adanya daripada gagal.
+    /// </summary>
+    private static string Normal(string jalur)
+    {
+        try
+        {
+            // GetFullPath TIDAK menyeragamkan pemisah: "akar\model/nama.gguf"
+            // tetap mengandung '/' sesudahnya. Tanpa penggantian ini,
+            // "<akar>\model/nama.gguf" (dari .env) dan "<akar>\model\nama.gguf"
+            // (dari pemindaian disk) dianggap dua jalur berbeda — persis
+            // penyebab ComboBox menampilkan model yang sama dua kali.
+            return Path.GetFullPath(jalur)
+                .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        }
+        catch (ArgumentException)
+        {
+            return jalur;
+        }
+        catch (PathTooLongException)
+        {
+            return jalur;
+        }
+        catch (NotSupportedException)
+        {
+            return jalur;
+        }
+    }
+
     /// <summary>Port <c>cariLlamaServer(k)</c>.</summary>
     public static string? CariLlamaServer(AppConfig k)
     {

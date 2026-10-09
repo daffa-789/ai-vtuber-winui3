@@ -26,7 +26,14 @@ public sealed class PcmPlayer : IDisposable
     private readonly Action<string>? _log;
     private readonly SemaphoreSlim _kunci = new(1, 1);
     private WaveOutEvent? _keluaran;
-    private AudioFileReader? _pembaca;
+
+    /// <summary>
+    /// Sumber audio yang sedang diputar. Sengaja <see cref="WaveStream"/> agar
+    /// dua jalur bisa dipakai bergantian: <see cref="AudioFileReader"/> untuk
+    /// berkas di disk, <see cref="WaveFileReader"/> atas <see cref="MemoryStream"/>
+    /// untuk klip yang hidup di memori (lihat <see cref="PutarKlipAsync"/>).
+    /// </summary>
+    private WaveStream? _pembaca;
     private bool _dibuang;
 
     /// <summary>
@@ -78,6 +85,45 @@ public sealed class PcmPlayer : IDisposable
             return false;
         }
 
+        return await PutarBersama(
+            () => new AudioFileReader(jalur) { Volume = 1.0f },
+            () => AnalisisAmplitudo(jalur),
+            Path.GetFileName(jalur),
+            ct, saatMulai).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Putar WAV yang sudah ada di memori dan tunggu sampai selesai.
+    ///
+    /// <para>
+    /// Inilah jalur utama sejak 2026-10-09: hasil sintesis tidak lagi ditulis
+    /// ke <c>%TEMP%</c> untuk diputar — <see cref="KlipSuara"/> dibaca langsung
+    /// lewat <see cref="MemoryStream"/>, sehingga tidak ada berkas yang
+    /// tertinggal sesudahnya.
+    /// </para>
+    /// </summary>
+    public async Task<bool> PutarKlipAsync(KlipSuara klip, float kecepatan = 1.0f,
+        CancellationToken ct = default, Action? saatMulai = null)
+    {
+        if (_dibuang || klip is null || klip.Data.Length == 0)
+        {
+            _log?.Invoke("[tts] klip kosong atau pemutar sudah dibuang");
+            return false;
+        }
+
+        var data = klip.Data;
+        return await PutarBersama(
+            () => new WaveFileReader(new MemoryStream(data, writable: false)),
+            () => AnalisisAmplitudo(new MemoryStream(data, writable: false)),
+            klip.Label,
+            ct, saatMulai).ConfigureAwait(false);
+    }
+
+    /// <summary>Rangka pemutaran yang sama untuk berkas maupun klip memori.</summary>
+    private async Task<bool> PutarBersama(
+        Func<WaveStream> buatSumber, Func<float[]> hitungLevel, string label,
+        CancellationToken ct, Action? saatMulai)
+    {
         await _kunci.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -95,7 +141,7 @@ public sealed class PcmPlayer : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
 
-                var hasil = await PutarSekaliAsync(jalur, percobaan, ct, saatMulai)
+                var hasil = await PutarSekaliAsync(buatSumber, hitungLevel, label, percobaan, ct, saatMulai)
                     .ConfigureAwait(false);
                 if (hasil)
                 {
@@ -110,7 +156,7 @@ public sealed class PcmPlayer : IDisposable
                 }
                 else
                 {
-                    _log?.Invoke($"[tts] percobaan putar ke-{percobaan} gagal; menyerah pada berkas ini");
+                    _log?.Invoke($"[tts] percobaan putar ke-{percobaan} gagal; menyerah pada \"{label}\"");
                 }
             }
 
@@ -134,13 +180,14 @@ public sealed class PcmPlayer : IDisposable
 
     /// <summary>Satu percobaan buka-perangkat lalu putar sampai habis.</summary>
     private async Task<bool> PutarSekaliAsync(
-        string jalur, int percobaan, CancellationToken ct, Action? saatMulai)
+        Func<WaveStream> buatSumber, Func<float[]> hitungLevel, string label,
+        int percobaan, CancellationToken ct, Action? saatMulai)
     {
         // Dihitung sekali di muka, sebelum perangkat dibuka. Hasilnya dipakai
         // sepanjang pemutaran dengan membaca CurrentTime.
-        _bingkaiLevel = AnalisisAmplitudo(jalur);
+        _bingkaiLevel = hitungLevel();
 
-        _pembaca = new AudioFileReader(jalur) { Volume = 1.0f };
+        _pembaca = buatSumber();
         _keluaran = new WaveOutEvent
         {
             // 150 ms: cukup untuk mencegah putus di mesin sibuk, tetapi
@@ -151,7 +198,7 @@ public sealed class PcmPlayer : IDisposable
 
         _keluaran.Init(_pembaca);
 
-        _log?.Invoke($"[tts] putar #{percobaan}: {Path.GetFileName(jalur)} "
+        _log?.Invoke($"[tts] putar #{percobaan}: {label} "
             + $"{_pembaca.WaveFormat.SampleRate} Hz, {_pembaca.WaveFormat.Channels} kanal, "
             + $"{_pembaca.TotalTime.TotalSeconds:F2} dtk, perangkat={HitungPerangkat()})");
 
@@ -248,7 +295,7 @@ public sealed class PcmPlayer : IDisposable
     }
 
     private async Task LaporkanLevelAsync(
-        AudioFileReader pembaca, Task sampai, CancellationToken ct)
+        WaveStream pembaca, Task sampai, CancellationToken ct)
     {
         // 60 Hz cukup untuk mulut bergerak mulus pada 30 fps render.
         var jeda = TimeSpan.FromMilliseconds(16);
@@ -281,7 +328,7 @@ public sealed class PcmPlayer : IDisposable
     }
 
     /// <summary>Ambil bingkai RMS pada posisi pemutaran saat ini.</summary>
-    private float AmbilLevel(AudioFileReader pembaca)
+    private float AmbilLevel(WaveStream pembaca)
     {
         var bingkai = _bingkaiLevel;
         if (bingkai is null || bingkai.Length == 0)
@@ -314,15 +361,48 @@ public sealed class PcmPlayer : IDisposable
     /// </summary>
     internal static float[] AnalisisAmplitudo(string jalur)
     {
-        var bingkai = new List<float>();
         try
         {
             using var baca = new AudioFileReader(jalur);
-            var perBingkai = Math.Max(1, baca.WaveFormat.SampleRate / LajuBingkai);
+            return HitungBingkai(baca);
+        }
+        catch (Exception)
+        {
+            // Berkas tidak terbaca: mulut cukup diam, suaranya tetap diputar.
+            return Array.Empty<float>();
+        }
+    }
+
+    /// <summary>
+    /// Varian untuk WAV yang hidup di memori. Sengaja memakai
+    /// <see cref="WaveFileReader"/> (bukan <see cref="AudioFileReader"/>) karena
+    /// itu yang bisa dibuka dari <see cref="Stream"/>.
+    /// </summary>
+    internal static float[] AnalisisAmplitudo(Stream aliran)
+    {
+        try
+        {
+            using var baca = new WaveFileReader(aliran);
+            return HitungBingkai(baca);
+        }
+        catch (Exception)
+        {
+            return Array.Empty<float>();
+        }
+    }
+
+    /// <summary>Baca seluruh sampel sebagai float lalu hitung RMS per bingkai.</summary>
+    private static float[] HitungBingkai(WaveStream sumber)
+    {
+        var bingkai = new List<float>();
+        try
+        {
+            var contoh = sumber.ToSampleProvider();
+            var perBingkai = Math.Max(1, sumber.WaveFormat.SampleRate / LajuBingkai);
             var buffer = new float[perBingkai];
 
             int dibaca;
-            while ((dibaca = baca.Read(buffer, 0, buffer.Length)) > 0)
+            while ((dibaca = contoh.Read(buffer, 0, buffer.Length)) > 0)
             {
                 double jumlah = 0;
                 for (var i = 0; i < dibaca; i++)
@@ -335,7 +415,6 @@ public sealed class PcmPlayer : IDisposable
         }
         catch (Exception)
         {
-            // Berkas tidak terbaca: mulut cukup diam, suaranya tetap diputar.
             return Array.Empty<float>();
         }
 

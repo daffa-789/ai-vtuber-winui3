@@ -12,19 +12,16 @@ public sealed class TtsPipelineTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Membuat WAV PCM kecil yang benar-benar ada di disk.
-    ///
-    /// <para>
-    /// Berkasnya harus nyata: penggabungan membaca header <c>fmt </c>/<c>data</c>
-    /// dari disk, jadi jalur palsu akan membuat penggabungan menyerah dan
-    /// pemutaran jatuh ke jalur berurutan — persis yang tidak ingin diuji.
-    /// </para>
+    /// Membuat WAV PCM kecil di <b>memori</b> — bentuk yang dipakai
+    /// <see cref="KlipSuara"/> sejak audio tidak lagi ditulis ke disk.
+    /// Isinya harus WAV sungguhan: penggabungan membaca header
+    /// <c>fmt </c>/<c>data</c>, jadi isi palsu membuat penggabungan menyerah
+    /// dan pemutaran jatuh ke jalur berurutan.
     /// </summary>
-    private static string WavSementara(int sampel)
+    private static byte[] WavDiMemori(int sampel)
     {
-        var jalur = Path.Combine(Path.GetTempPath(), $"uji-tts-{Guid.NewGuid():N}.wav");
         var data = new byte[sampel * 2];
-        using var aliran = File.Create(jalur);
+        using var aliran = new MemoryStream();
         using var tulis = new BinaryWriter(aliran, Encoding.ASCII);
         tulis.Write(Encoding.ASCII.GetBytes("RIFF"));
         tulis.Write(36 + data.Length);
@@ -40,8 +37,19 @@ public sealed class TtsPipelineTests
         tulis.Write(Encoding.ASCII.GetBytes("data"));
         tulis.Write(data.Length);
         tulis.Write(data);
-        return jalur;
+        tulis.Flush();
+        return aliran.ToArray();
     }
+
+    /// <summary>Klip sungguhan yang bisa digabung.</summary>
+    private static KlipSuara Klip(int sampel = 800) => new(WavDiMemori(sampel), "uji");
+
+    /// <summary>
+    /// Klip berlabel teks tetapi isinya BUKAN WAV — dipakai pada uji yang
+    /// sengaja ingin penggabungan gagal sehingga pemutaran berurutan.
+    /// </summary>
+    private static KlipSuara KlipPalsu(string label) =>
+        new(Encoding.UTF8.GetBytes(label), label);
 
     [Fact]
     public async Task WholeReplyIsSynthesizedBeforeAnyPlayback()
@@ -53,43 +61,28 @@ public sealed class TtsPipelineTests
         // SATU berkas supaya perangkat audio hanya dibuka sekali.
         var disintesis = new ConcurrentQueue<string>();
         var diputar = new ConcurrentQueue<string>();
-        var dibuat = new List<string>();
 
         using var pipeline = new TtsPipeline((text, _) =>
         {
-            var wav = WavSementara(800);
-            lock (dibuat) dibuat.Add(wav);
             disintesis.Enqueue(text);
-            return Task.FromResult<string?>(wav);
-        }, (wav, _, started) =>
+            return Task.FromResult<KlipSuara?>(Klip());
+        }, (klip, _, started) =>
         {
             // Pemutaran pertama hanya boleh mulai setelah KEDUA kalimat selesai.
             Assert.Equal(2, disintesis.Count);
-            diputar.Enqueue(wav);
+            diputar.Enqueue(klip.Label);
             started();
             return Task.FromResult(true);
         });
 
-        try
-        {
-            Assert.True(await pipeline.SiapkanDanPutarAsync(
-                "Kalimat pertama selesai. Kalimat kedua selesai.").WaitAsync(Limit));
-            await pipeline.Penyelesaian.WaitAsync(Limit);
+        Assert.True(await pipeline.SiapkanDanPutarAsync(
+            "Kalimat pertama selesai. Kalimat kedua selesai.").WaitAsync(Limit));
+        await pipeline.Penyelesaian.WaitAsync(Limit);
 
-            Assert.Equal(2, disintesis.Count);
-            Assert.Single(diputar);
-            Assert.False(pipeline.Sibuk);
-        }
-        finally
-        {
-            lock (dibuat)
-            {
-                foreach (var jalur in dibuat)
-                {
-                    try { File.Delete(jalur); } catch (IOException) { }
-                }
-            }
-        }
+        Assert.Equal(2, disintesis.Count);
+        // Dua klip berformat sama digabung di memori jadi SATU pemutaran.
+        Assert.Single(diputar);
+        Assert.False(pipeline.Sibuk);
     }
 
     [Fact]
@@ -99,7 +92,7 @@ public sealed class TtsPipelineTests
         // laporan kemajuan gelembung tampak menggantung selama seluruh sintesis.
         var laporan = new ConcurrentQueue<(int Selesai, int Total)>();
         using var pipeline = new TtsPipeline(
-            (text, _) => Task.FromResult<string?>(text),
+            (text, _) => Task.FromResult<KlipSuara?>(KlipPalsu(text)),
             (_, _, started) => { started(); return Task.FromResult(true); });
 
         await pipeline.SiapkanDanPutarAsync(
@@ -120,7 +113,7 @@ public sealed class TtsPipelineTests
             entered.TrySetResult(true);
             try { await Task.Delay(Timeout.Infinite, ct); }
             finally { stopped.TrySetResult(true); }
-            return "never.wav";
+            return (KlipSuara?)Klip(10);
         }, (_, _, _) => throw new InvalidOperationException("Must not play"));
         var ready = pipeline.SiapkanDanPutarAsync("Balasan menunggu suara.");
         await entered.Task.WaitAsync(Limit);
@@ -140,10 +133,13 @@ public sealed class TtsPipelineTests
         using var pipeline = new TtsPipeline((text, _) =>
         {
             made.Enqueue(text);
-            return Task.FromResult<string?>(text.StartsWith("Kalimat pertama") ? null : text);
-        }, (wav, _, started) =>
+            // Klip palsu sengaja: isinya bukan WAV, jadi penggabungan gagal dan
+            // kedua kalimat diputar BERURUTAN — itu yang ingin dibuktikan di sini.
+            return Task.FromResult<KlipSuara?>(
+                text.StartsWith("Kalimat pertama") ? null : KlipPalsu(text));
+        }, (klip, _, started) =>
         {
-            played.Enqueue(wav);
+            played.Enqueue(klip.Label);
             started();
             return Task.FromResult(true);
         });
@@ -158,7 +154,7 @@ public sealed class TtsPipelineTests
     public async Task TotalSynthesisFailureReturnsFalse()
     {
         using var pipeline = new TtsPipeline(
-            (_, _) => Task.FromResult<string?>(null),
+            (_, _) => Task.FromResult<KlipSuara?>(null),
             (_, _, _) => throw new InvalidOperationException("Must not play"));
         Assert.False(await pipeline.SiapkanDanPutarAsync("Tidak ada WAV tersedia.").WaitAsync(Limit));
         await pipeline.Penyelesaian.WaitAsync(Limit);
@@ -169,7 +165,7 @@ public sealed class TtsPipelineTests
     public async Task PlaybackFailureBeforeStartDoesNotReportReady()
     {
         using var pipeline = new TtsPipeline(
-            (text, _) => Task.FromResult<string?>(text),
+            (text, _) => Task.FromResult<KlipSuara?>(KlipPalsu(text)),
             (_, _, _) => Task.FromResult(false));
         Assert.False(await pipeline.SiapkanDanPutarAsync("Perangkat gagal dibuka.").WaitAsync(Limit));
         await pipeline.Penyelesaian.WaitAsync(Limit);
@@ -189,7 +185,7 @@ public sealed class TtsPipelineTests
                 finally { oldStopped.TrySetResult(true); }
             }
             else Assert.True(oldStopped.Task.IsCompleted);
-            return text;
+            return (KlipSuara?)KlipPalsu(text);
         }, (_, _, started) => { started(); return Task.FromResult(true); });
         var oldReady = pipeline.SiapkanDanPutarAsync("Balasan lama menunggu.");
         await oldEntered.Task.WaitAsync(Limit);
@@ -209,7 +205,7 @@ public sealed class TtsPipelineTests
             entered.TrySetResult(true);
             try { await Task.Delay(Timeout.Infinite, ct); }
             finally { stopped = true; }
-            return "never.wav";
+            return (KlipSuara?)Klip(10);
         }, (_, _, _) => Task.FromResult(true), () =>
         {
             Assert.True(stopped);
@@ -229,6 +225,7 @@ public sealed class TtsPipelineTests
         using var pipeline = new TtsPipeline(
             (_, _) => throw new InvalidOperationException("Must not synthesize"),
             (_, _, _) => throw new InvalidOperationException("Must not play"));
+
         Assert.False(await pipeline.SiapkanDanPutarAsync(" ").WaitAsync(Limit));
         Assert.False(pipeline.Sibuk);
     }

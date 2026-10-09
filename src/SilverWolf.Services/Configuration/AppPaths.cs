@@ -89,6 +89,14 @@ public static class AppPaths
 
     public static string Kizuna(string akar) => Path.Combine(Memori(akar), "kizuna");
 
+    /// <summary>
+    /// Arsip audio balasan. Berbeda dari cache TTS di <c>%TEMP%</c> (yang
+    /// dibuang saat aplikasi ditutup), arsip ini menetap supaya balasan lama
+    /// bisa diputar ulang. Dipangkas bergilir ke sejumlah berkas terbaru —
+    /// lihat <c>SuaraArsip</c>.
+    /// </summary>
+    public static string Suara(string akar) => Path.Combine(Memori(akar), "suara");
+
     public static string Model(string akar) => Path.Combine(akar, "model");
 
     public static string Llama(string akar) => Path.Combine(akar, "bin", "llama");

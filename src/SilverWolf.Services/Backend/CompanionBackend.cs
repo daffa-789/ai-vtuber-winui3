@@ -92,7 +92,11 @@ public sealed class CompanionBackend
 
     public KizunaEngine? Kizuna { get; }
 
-    public string ModelName { get; }
+    /// <summary>
+    /// Nama model yang dilaporkan health. Bisa berubah saat pemilih model
+    /// memuat GGUF lain ke llama-server yang sama.
+    /// </summary>
+    public string ModelName { get; internal set; }
 
     public CompanionBackend(
         AppConfig konfig,

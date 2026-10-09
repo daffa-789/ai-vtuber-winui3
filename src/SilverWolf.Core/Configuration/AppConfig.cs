@@ -123,6 +123,34 @@ public sealed class AppConfig
     /// <summary>VTUBER_TTS_CACHE — simpan hasil WAV agar kalimat berulang tak dihitung ulang.</summary>
     public bool TtsCache { get; set; } = true;
 
+    /// <summary>
+    /// VTUBER_TTS_CACHE_MEMORI — simpan hasil sintesis di RAM, bukan di disk.
+    ///
+    /// <para>
+    /// <b>Kenapa bawaan = ya (permintaan Master 2026-10-09).</b> Cache disk
+    /// <c>%TEMP%\silverwolf-tts\</c> hanya bertambah: setiap kalimat yang pernah
+    /// diucapkan meninggalkan WAV 40 kHz yang tidak pernah dibuang sendiri.
+    /// Dengan cache memori, berkas WAV dihapus segera sesudah byte-nya terbaca,
+    /// dan kalimat yang sama dalam satu sesi tetap tidak disintesis ulang.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>tidak</c> mengembalikan perilaku lama (cache berbasis berkas) — berguna
+    /// untuk membandingkan saat mendiagnosis, bukan untuk dipakai sehari-hari.
+    /// </para>
+    /// </summary>
+    public bool TtsCacheMemori { get; set; } = true;
+
+    /// <summary>
+    /// VTUBER_TTS_ARSI — salin balasan yang sudah digabung ke
+    /// <c>silver_wolf_memory/suara</c> (100 berkas terbaru).
+    ///
+    /// <b>Bawaan = tidak sejak 2026-10-09</b>: Master meminta audio hasil
+    /// sintesis tidak menumpuk di disk. Nyalakan hanya kalau riwayat suara
+    /// memang diinginkan — arsip ini tidak dibuang saat aplikasi ditutup.
+    /// </summary>
+    public bool TtsArsip { get; set; } = false;
+
     /// <summary>VTUBER_RVC — apakah tahap RVC dipakai.</summary>
     public bool Rvc { get; set; } = true;
 
@@ -248,6 +276,8 @@ public static class ConfigReader
             TtsPerKalimat = env.Bool("VTUBER_TTS_PER_KALIMAT", true),
             TtsBatasDetik = env.Int("VTUBER_TTS_BATAS_DETIK", 40),
             TtsCache = env.Bool("VTUBER_TTS_CACHE", true),
+            TtsCacheMemori = env.Bool("VTUBER_TTS_CACHE_MEMORI", true),
+            TtsArsip = env.Bool("VTUBER_TTS_ARSI", false),
             TtsPekerja = env.Bool("VTUBER_TTS_PEKERJA", true),
             TtsPekerjaSiapDetik = env.Int("VTUBER_TTS_PEKERJA_SIAP_DETIK", 120),
             Rvc = env.Bool("VTUBER_RVC", true),

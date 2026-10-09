@@ -37,17 +37,80 @@
     <Grid Background="#FF0E1420">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
+
+        <!--
+          Pemilih model.
+
+          Hanya muncul bila lebih dari satu GGUF ditemukan (BisaGantiModel) —
+          dengan satu model tidak ada yang bisa dipilih, dan baris ini cuma
+          memakan ruang.
+
+          Mengganti model berarti mematikan llama-server dan memuat GGUF lain
+          dari awal: 5 GB butuh puluhan detik. Karena itu ComboBox dikunci
+          selama proses berjalan (IsEnabled = bukan SedangGantiModel) dan
+          labelnya berubah menjadi "MEMUAT MODEL…" lewat TeksModel.
+        -->
+        <Border
+            Grid.Row="0"
+            Margin="12,12,12,0"
+            Padding="10,8,10,8"
+            CornerRadius="8"
+            Background="#FF151C2B"
+            Visibility="{Binding BisaGantiModel}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock
+                    Grid.Column="0"
+                    VerticalAlignment="Center"
+                    Margin="0,0,10,0"
+                    Text="MODEL"
+                    FontSize="11"
+                    Opacity="0.6"
+                    Foreground="#FFE6EDF7" />
+
+                <ComboBox
+                    Grid.Column="1"
+                    HorizontalAlignment="Stretch"
+                    MinWidth="180"
+                    ItemsSource="{Binding NamaModel}"
+                    SelectedIndex="{Binding IndeksModel, Mode=TwoWay}"
+                    IsEnabled="{Binding BisaPilihModel}"
+                    ToolTipService.ToolTip="Ganti model GGUF. llama-server dimuat ulang — butuh puluhan detik." />
+            </Grid>
+        </Border>
+
+        <!-- Status hasil pemuatan terakhir. Sengaja dipisah dari banner galat
+             di bawah supaya pesan "model aktif: …" tidak tampil sebagai kegagalan. -->
+        <Border
+            Grid.Row="1"
+            Margin="12,8,12,0"
+            Padding="10,6,10,6"
+            CornerRadius="6"
+            Background="#FF111A28"
+            Visibility="{Binding AdaStatusModel}">
+            <TextBlock
+                Text="{Binding StatusModel}"
+                TextWrapping="Wrap"
+                FontSize="11"
+                Foreground="#FF9FB3C8" />
+        </Border>
 
         <!-- Galat runtime. Tidak mengambil ruang sama sekali saat tidak ada
              galat, karena Visibility berubah menjadi Collapsed. Pengikatan
              bool -> Visibility di sini memakai konversi bawaan WinUI 3;
              jangan pasang konverter khusus. -->
         <Border
-            Grid.Row="0"
-            Margin="12,12,12,0"
+            Grid.Row="2"
+            Margin="12,8,12,0"
             Padding="10,8,10,8"
             CornerRadius="8"
             Background="#FF2A1620"
@@ -59,8 +122,8 @@
                 Foreground="#FFF87171" />
         </Border>
 
-        <views:MessageListView Grid.Row="1" Margin="8,12,8,8" />
+        <views:MessageListView Grid.Row="3" Margin="8,12,8,8" />
 
-        <views:ComposerView Grid.Row="2" Margin="12,0,12,12" />
+        <views:ComposerView Grid.Row="4" Margin="12,0,12,12" />
     </Grid>
 </UserControl>

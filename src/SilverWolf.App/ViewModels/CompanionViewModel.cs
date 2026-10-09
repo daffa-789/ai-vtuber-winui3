@@ -12,6 +12,7 @@ using SilverWolf.Core.Text;
 using SilverWolf.Services.Backend;
 using SilverWolf.Services.Bootstrap;
 using SilverWolf.Services.Inference;
+using SilverWolf.Services.Llama;
 
 namespace SilverWolf.App.ViewModels;
 
@@ -36,6 +37,12 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 {
     /// <summary>Padanan <c>localStorage['silverwolf_mirror_track']</c>.</summary>
     private const string KunciMirror = "silverwolf_mirror_track";
+
+    /// <summary>
+    /// Model GGUF yang dipilih pengguna. Disimpan sebagai jalur relatif agar
+    /// tetap berlaku bila folder proyek dipindah.
+    /// </summary>
+    private const string KunciModel = "silverwolf_model_path";
 
     private static readonly string[] TurunanHealth =
     [
@@ -106,6 +113,29 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
     private bool _mirrorTrack;
     private DateTimeOffset _lastUserActivity = DateTimeOffset.Now;
     private string _draf = string.Empty;
+
+    /// <summary>Jalur absolut setiap model, sejajar urutan <see cref="NamaModel"/>.</summary>
+    private readonly List<string> _jalurModel = new();
+
+    private int _indeksModel = -1;
+
+    /// <summary>
+    /// Index model yang <b>benar-benar sedang dimuat</b> llama-server. Terpisah
+    /// dari <see cref="IndeksModel"/> (pilihan ComboBox) supaya kegagalan
+    /// pemuatan bisa mengembalikan pilihan ke keadaan sebenarnya, dan supaya
+    /// memilih model yang sudah aktif tidak memicu pemuatan ulang 5 GB.
+    /// </summary>
+    private int _indeksModelAktif = -1;
+
+    /// <summary>
+    /// Pengaman: ComboBox mengubah <see cref="IndeksModel"/> juga saat daftarnya
+    /// sedang diisi, dan itu bukan permintaan pengguna untuk memuat ulang model.
+    /// </summary>
+    private bool _siapGantiModel;
+
+    private bool _sedangGantiModel;
+
+    private string _statusModel = string.Empty;
 
     public CompanionViewModel()
     {
@@ -393,6 +423,106 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
     public string TeksSikap => _kizuna?.Tone ?? "-";
 
+    // ── Pemilih model ──────────────────────────────────────────────────────
+
+    /// <summary>Nama berkas setiap GGUF yang ditemukan, untuk ComboBox.</summary>
+    public ObservableCollection<string> NamaModel { get; } = new();
+
+    /// <summary>
+    /// Indek model aktif. Setter-nya sengaja memicu pemuatan ulang — itu cara
+    /// ComboBox memberitahu "pengguna memilih model lain".
+    /// </summary>
+    public int IndeksModel
+    {
+        get => _indeksModel;
+        set
+        {
+            if (value == _indeksModel)
+            {
+                return;
+            }
+
+            if (SetProperty(ref _indeksModel, value))
+            {
+                OnPropertyChanged(nameof(TeksModel));
+
+                // Jangan memuat ulang saat daftar sedang diisi, dan jangan
+                // menumpuk dua pemuatan sekaligus.
+                if (_siapGantiModel && value >= 0 && !_sedangGantiModel)
+                {
+                    _ = GantiModelAsync(value);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sedang memuat GGUF lain. Mengunci ComboBox supaya pengguna tidak
+    /// memilih berkali-kali selama model 5 GB masuk ke VRAM.
+    /// </summary>
+    public bool SedangGantiModel
+    {
+        get => _sedangGantiModel;
+        private set
+        {
+            if (SetProperty(ref _sedangGantiModel, value))
+            {
+                OnPropertyChanged(nameof(TeksModel));
+                OnPropertyChanged(nameof(BisaPilihModel));
+            }
+        }
+    }
+
+    /// <summary>Pesan hasil pemuatan terakhir; kosong bila belum pernah ganti.</summary>
+    public string StatusModel
+    {
+        get => _statusModel;
+        private set
+        {
+            if (SetProperty(ref _statusModel, value))
+            {
+                OnPropertyChanged(nameof(AdaStatusModel));
+            }
+        }
+    }
+
+    public bool AdaStatusModel => !string.IsNullOrWhiteSpace(StatusModel);
+
+    /// <summary>Sembunyikan pemilih bila cuma ada satu model — tidak ada yang bisa dipilih.</summary>
+    public bool BisaGantiModel => NamaModel.Count > 1;
+
+    /// <summary>Index model yang sedang dimuat; <c>-1</c> bila tidak ada.</summary>
+    public int IndeksModelAktif
+    {
+        get => _indeksModelAktif;
+        private set => SetProperty(ref _indeksModelAktif, value);
+    }
+
+    /// <summary>
+    /// Bolehkah ComboBox disentuh. Terbalik dari <see cref="SedangGantiModel"/>
+    /// karena XAML di sini memakai pengikatan langsung tanpa konverter.
+    /// </summary>
+    public bool BisaPilihModel => !_sedangGantiModel;
+
+    /// <summary>Label ComboBox: nama model aktif, atau keadaan pemuatan.</summary>
+    public string TeksModel
+    {
+        get
+        {
+            if (_sedangGantiModel)
+            {
+                return "MEMUAT MODEL…";
+            }
+
+            if (_indeksModel >= 0 && _indeksModel < NamaModel.Count)
+            {
+                return NamaModel[_indeksModel];
+            }
+
+            return "-";
+        }
+    }
+
     // ── Perintah ───────────────────────────────────────────────────────────
 
     public IAsyncRelayCommand KirimCommand { get; }
@@ -427,9 +557,13 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
                 OnPropertyChanged(nameof(TeksMirror));
             CrashLog.Tahap("runtime: StartAsync mulai");
 
+            var modelTersimpan = await Task.Run(BacaModelTersimpan);
+            if (_sedangDibuang) return;
+
             var runtime = await CompanionRuntime.StartAsync(
                 log: pesan => CrashLog.Tahap($"runtime: {pesan}"),
                 onError: galat => CrashLog.Tulis("runtime", galat),
+                modelPath: modelTersimpan,
                 ct: _cts.Token);
             if (_sedangDibuang)
             {
@@ -439,6 +573,8 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
             _runtime = runtime;
             _backend = _runtime.Backend;
             CrashLog.Tahap("runtime: siap");
+
+            MuatDaftarModel(runtime);
 
             SiapkanTts(_runtime);
 
@@ -456,6 +592,161 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
             CrashLog.Tulis("InisialisasiAsync", galat);
             HealthError = galat.Message;
         }
+    }
+
+    /// <summary>
+    /// Isi daftar model dari berkas GGUF yang benar-benar ada di
+    /// <c>model/</c>, lalu tandai mana yang sedang dipakai.
+    ///
+    /// <para>
+    /// Dipanggil sekali setelah runtime siap — bukan dari konstruktor — karena
+    /// butuh <see cref="AppConfig"/> yang sudah jadi (dan pemindaian disk tidak
+    /// boleh menahan aktivasi jendela).
+    /// </para>
+    /// </summary>
+    private void MuatDaftarModel(CompanionRuntime runtime)
+    {
+        try
+        {
+            var jalur = ModelLocator.Pilihan(runtime.Konfig);
+            var aktif = ModelLocator.Absolut(runtime.Konfig, runtime.Konfig.LocalModelPath);
+
+            _siapGantiModel = false;
+            NamaModel.Clear();
+            _jalurModel.Clear();
+
+            var indeksAktif = -1;
+            for (var i = 0; i < jalur.Count; i++)
+            {
+                NamaModel.Add(Path.GetFileName(jalur[i]));
+                _jalurModel.Add(jalur[i]);
+
+                if (string.Equals(jalur[i], aktif, StringComparison.OrdinalIgnoreCase))
+                {
+                    indeksAktif = i;
+                }
+            }
+
+            _indeksModel = indeksAktif;
+            _indeksModelAktif = indeksAktif;
+            _siapGantiModel = true;
+
+            OnPropertyChanged(nameof(IndeksModel));
+            OnPropertyChanged(nameof(IndeksModelAktif));
+            OnPropertyChanged(nameof(TeksModel));
+            OnPropertyChanged(nameof(BisaGantiModel));
+
+            CrashLog.Tahap(
+                $"model: {jalur.Count} ditemukan, aktif = " +
+                (indeksAktif >= 0 ? NamaModel[indeksAktif] : "tidak ada")
+                + (jalur.Count > 0 ? $" | daftar = {string.Join(", ", NamaModel)}" : string.Empty));
+        }
+        catch (Exception galat)
+        {
+            // Daftar model yang gagal dimuat tidak boleh menggagalkan startup:
+            // chat tetap harus jalan. Tetap dicatat supaya kalau pemilihnya
+            // hilang, penyebabnya bisa dibaca di crash.log.
+            CrashLog.Tulis("MuatDaftarModel", galat, $"akar={runtime.Konfig.Akar}");
+        }
+    }
+
+    /// <summary>
+    /// Muat GGUF lain ke llama-server. Ini operasi berat: model 5 GB butuh
+    /// puluhan detik, jadi ComboBox dikunci dan keadaannya diberitahu ke
+    /// pengguna lewat <see cref="TeksModel"/>.
+    /// </summary>
+    private async Task GantiModelAsync(int indeks)
+    {
+        if (indeks < 0 || indeks >= _jalurModel.Count || _runtime is null)
+        {
+            return;
+        }
+
+        var jalur = _jalurModel[indeks];
+        var nama = Path.GetFileName(jalur);
+
+        // Sudah aktif? Jangan mematikan llama-server dan memuat ulang 5 GB hanya
+        // karena index ComboBox berubah (mis. saat daftar diisi ulang).
+        if (IndeksModelAktif == indeks)
+        {
+            return;
+        }
+
+        SedangGantiModel = true;
+        StatusModel = $"memuat {nama}…";
+        CrashLog.Tahap($"model: ganti ke {nama}");
+        // Selalu kembali ke utas UI: SegarkanHealthAsync di bawah menyentuh
+        // state terikat XAML (HealthError/StatusTeks), dan callback ini bisa
+        // berjalan di utas threadpool karena dipanggil dari setter properti.
+        var ui = _dispatcher;
+
+        try
+        {
+            var hasil = await _runtime.GantiModelAsync(jalur, _cts.Token)
+                .ConfigureAwait(false);
+            if (_sedangDibuang)
+            {
+                return;
+            }
+
+            if (hasil.Ok)
+            {
+                IndeksModelAktif = indeks;
+                // Simpan hanya setelah berhasil dimuat — kalau gagal, pilihan
+                // lama harus tetap yang dipakai saat aplikasi dibuka lagi.
+                SimpanModel(jalur);
+                StatusModel = $"model aktif: {nama}";
+                HealthError = null;
+            }
+            else
+            {
+                // Kembalikan pilihan ke model yang benar-benar berjalan supaya
+                // ComboBox tidak berbohong tentang keadaan sebenarnya.
+                StatusModel = $"gagal memuat {nama}: {hasil.Reason}";
+                HealthError = $"Gagal memuat model {nama}: {hasil.Reason}";
+                CrashLog.Tahap($"model: gagal — {hasil.Reason}");
+
+                if (ui is not null)
+                {
+                    ui.TryEnqueue(() =>
+                    {
+                        if (_sedangDibuang || IndeksModelAktif < 0) return;
+                        IndeksModel = IndeksModelAktif;
+                    });
+                }
+            }
+
+            await SegarkanHealthAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_sedangDibuang)
+        {
+            // Penutupan selama pemuatan bukan galat.
+        }
+        catch (Exception galat)
+        {
+            CrashLog.Tulis("GantiModelAsync", galat);
+            StatusModel = $"gagal memuat {nama}: {galat.Message}";
+        }
+        finally
+        {
+            SedangGantiModel = false;
+        }
+    }
+
+    private static string? BacaModelTersimpan()
+    {
+        var teks = UiSettings.BacaTeks(KunciModel);
+        return string.IsNullOrWhiteSpace(teks) ? null : teks;
+    }
+
+    private static void SimpanModel(string absolut)
+    {
+        // Butuh akar proyek untuk membuat jalur relatif; AppPaths tahu caranya.
+        var akar = SilverWolf.Services.Configuration.AppPaths.TentukanAkar(null);
+        var relatif = ModelLocator.Relatif(
+            new SilverWolf.Core.Configuration.AppConfig { Akar = akar }, absolut);
+
+        UiSettings.TulisTeks(KunciModel, relatif);
     }
 
     /// <summary>
@@ -1058,6 +1349,23 @@ public sealed class CompanionViewModel : ObservableObject, IAsyncDisposable
 
             _tts.Dispose();
             _tts = null;
+        }
+
+        // Buang seluruh audio sementara TTS SETELAH _tts.Dispose().
+        //
+        // Urutannya wajib: Dispose() memicu _buangPemutar() di TtsPipeline yang
+        // mematikan pekerja Python (TtsWorker.Matikan -> PekerjaTts.Matikan),
+        // dan di atasnya TungguSelesaiAsync(3 dtk) sudah menunggu tugas suara
+        // berakhir. Folder %TEMP%\sw-pekerja-* dipegang proses Python itu; kalau
+        // dihapus selagi prosesnya hidup, penghapusan gagal senyap. Bersihkan
+        // sendiri tidak pernah melempar, jadi aman di jalur penutupan.
+        try
+        {
+            SilverWolf.Services.Tts.TempAudio.Bersihkan(pesan => CrashLog.Tahap(pesan));
+        }
+        catch (Exception)
+        {
+            // Penutupan tidak boleh gagal hanya karena pembersihan berkas.
         }
 
         if (_runtime is not null)

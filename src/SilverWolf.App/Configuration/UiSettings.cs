@@ -32,23 +32,39 @@ public static class UiSettings
 
     private static readonly string Berkas = Path.Combine(Folder, "ui-settings.json");
 
+    /// <summary>
+    /// Kamus mentah. Nilai disimpan sebagai <see cref="JsonElement"/> karena satu
+    /// berkas kini menampung dua jenis nilai (bool lama seperti
+    /// <c>silverwolf_mirror_track</c>, dan teks baru seperti
+    /// <c>silverwolf_model_path</c>).
+    ///
+    /// <b>Kenapa aman untuk berkas lama:</b> berkas yang ditulis versi sebelumnya
+    /// berbentuk <c>{"kunci":true}</c>, dan itu terbaca apa adanya sebagai
+    /// <see cref="JsonValueKind.True"/> — jadi preferensi yang sudah tersimpan
+    /// tidak hilang saat memperbarui aplikasi.
+    /// </summary>
+    private static Dictionary<string, JsonElement> Kamus()
+    {
+        if (!File.Exists(Berkas))
+        {
+            return new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        }
+
+        var teks = File.ReadAllText(Berkas);
+        if (string.IsNullOrWhiteSpace(teks))
+        {
+            return new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        }
+
+        return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(teks)
+               ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+    }
+
     public static bool Baca(string kunci, bool bawaan = false)
     {
         try
         {
-            if (!File.Exists(Berkas))
-            {
-                return bawaan;
-            }
-
-            var teks = File.ReadAllText(Berkas);
-            if (string.IsNullOrWhiteSpace(teks))
-            {
-                return bawaan;
-            }
-
-            var kamus = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(teks);
-            if (kamus is null || !kamus.TryGetValue(kunci, out var nilai))
+            if (!Kamus().TryGetValue(kunci, out var nilai))
             {
                 return bawaan;
             }
@@ -58,6 +74,7 @@ public static class UiSettings
                 JsonValueKind.True => true,
                 JsonValueKind.False => false,
                 JsonValueKind.String => bool.TryParse(nilai.GetString(), out var b) ? b : bawaan,
+                JsonValueKind.Number => nilai.TryGetInt32(out var n) ? n != 0 : bawaan,
                 _ => bawaan,
             };
         }
@@ -68,28 +85,54 @@ public static class UiSettings
         }
     }
 
-    public static void Tulis(string kunci, bool nilai)
+    public static void Tulis(string kunci, bool nilai) =>
+        TulisMentah(kunci, JsonSerializer.SerializeToElement(nilai));
+
+    /// <summary>
+    /// Baca preferensi teks. Mengembalikan <paramref name="bawaan"/> bila kunci
+    /// tidak ada, atau bila nilainya bukan teks (mis. berkas lama dari versi
+    /// yang belum mengenal kunci ini).
+    /// </summary>
+    public static string BacaTeks(string kunci, string bawaan = "")
+    {
+        try
+        {
+            if (!Kamus().TryGetValue(kunci, out var nilai) || nilai.ValueKind != JsonValueKind.String)
+            {
+                return bawaan;
+            }
+
+            var teks = nilai.GetString();
+            return string.IsNullOrWhiteSpace(teks) ? bawaan : teks;
+        }
+        catch (Exception galat)
+        {
+            CrashLog.Tulis("UiSettings.BacaTeks", galat, $"kunci={kunci}");
+            return bawaan;
+        }
+    }
+
+    public static void TulisTeks(string kunci, string nilai) =>
+        TulisMentah(kunci, JsonSerializer.SerializeToElement(nilai));
+
+    /// <summary>
+    /// Tulis satu kunci tanpa menimpa kunci lain — berkas dibaca ulang dulu,
+    /// baru ditulis penuh. Menulis seluruh berkas (bukan menambal sebagian)
+    /// menjaga berkas tetap JSON valid sekalipun proses mati di tengah.
+    /// </summary>
+    private static void TulisMentah(string kunci, JsonElement nilai)
     {
         try
         {
             Directory.CreateDirectory(Folder);
 
-            var kamus = new Dictionary<string, bool>(StringComparer.Ordinal);
-            if (File.Exists(Berkas))
-            {
-                var teks = File.ReadAllText(Berkas);
-                if (!string.IsNullOrWhiteSpace(teks))
-                {
-                    kamus = JsonSerializer.Deserialize<Dictionary<string, bool>>(teks) ?? kamus;
-                }
-            }
-
+            var kamus = Kamus();
             kamus[kunci] = nilai;
             File.WriteAllText(Berkas, JsonSerializer.Serialize(kamus));
         }
         catch (Exception galat)
         {
-            CrashLog.Tulis("UiSettings.Tulis", galat, $"kunci={kunci}");
+            CrashLog.Tulis("UiSettings.TulisMentah", galat, $"kunci={kunci}");
         }
     }
 }

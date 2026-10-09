@@ -44,6 +44,22 @@ public sealed class TtsWorker
     /// </summary>
     private readonly PekerjaTts? _pekerja;
 
+    // ── Cache memori ─────────────────────────────────────────────────────────
+    // Menggantikan cache berbasis berkas (%TEMP%\silverwolf-tts) yang menumpuk
+    // tanpa batas. Kuncinya sama dengan cache berkas (teks + seluruh parameter
+    // suara), isinya KlipSuara, dan ukurannya DIBATASI: melampaui batas berarti
+    // klip terlama dibuang, bukan disk yang terus tumbuh.
+    private const int MaksKlip = 64;
+    private const long MaksBita = 64L * 1024 * 1024;
+
+    private readonly object _kunciCache = new();
+    private readonly Dictionary<string, KlipSuara> _cacheMemori = new(StringComparer.Ordinal);
+
+    /// <summary>Urutan pemakaian; paling belakang = paling baru.</summary>
+    private readonly LinkedList<string> _urutanCache = new();
+
+    private long _bitaCache;
+
     public TtsWorker(AppConfig konfig, Action<string>? log = null)
     {
         _konfig = konfig;
@@ -167,16 +183,102 @@ public sealed class TtsWorker
     public async Task<string?> HasilkanSatuAsync(string kalimat, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        // Dua tahap, dan urutannya penting:
-        //   1. BuangTag   — tag [emosi] dari protokol balasan;
-        //   2. Bersihkan  — penanda Markdown (*, `, #, —) supaya TTS tidak
-        //                   mengucapkannya sebagai "bintang" (keluhan Master).
-        // Dipasang di sini karena INI satu-satunya titik yang dilewati semua
-        // jalur sintesis — TtsPipeline maupun HasilkanAsync.
-        var teks = TeksUcapan.Bersihkan(SentenceSplitter.BuangTag(kalimat)).Trim();
-        if (teks.Length == 0)
+        if (!SiapkanTeks(kalimat, out var teks, out var tempo))
         {
             return null;
+        }
+
+        // Cache berkas lama. Hanya dipakai kalau cache memori dimatikan — lihat
+        // HasilkanKlipAsync, jalur yang dipakai TtsPipeline.
+        if (_konfig.TtsCache)
+        {
+            var temu = JalurCache(teks);
+            if (WavSah(temu))
+            {
+                return temu;
+            }
+        }
+
+        return await HasilkanBerkasAsync(teks, tempo, _konfig.TtsCache, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Hasilkan satu klip audio di <b>memori</b> untuk satu potongan teks.
+    /// Inilah jalur yang dipakai <see cref="TtsPipeline"/>.
+    ///
+    /// <para>
+    /// Berkas WAV yang ditulis Python dibaca ke <see cref="KlipSuara"/> lalu
+    /// <b>dihapus segera</b> (bila <c>VTUBER_TTS_CACHE_MEMORI=ya</c>, bawaan).
+    /// Jadi yang tertinggal hanyalah byte di RAM, dan RAM itu dibatasi:
+    /// melewati <c>MaksKlip</c>/<c>MaksBita</c> berarti klip terlama dibuang.
+    /// </para>
+    /// </summary>
+    public async Task<KlipSuara?> HasilkanKlipAsync(string kalimat, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!SiapkanTeks(kalimat, out var teks, out var tempo))
+        {
+            return null;
+        }
+
+        var kunci = KunciCache(teks);
+        if (_konfig.TtsCacheMemori && AmbilCacheMemori(kunci) is { } temu)
+        {
+            _log?.Invoke($"[tts] cache memori: {Potong(teks, 32)}");
+            return temu;
+        }
+
+        // Cache berkas hanya masuk akal kalau cache memori dimatikan; dengan
+        // cache memori, berkasnya akan dihapus sesudah dibaca, jadi menulisnya
+        // ke folder cache hanya menyia-nyiakan penulisan.
+        var pakaiCacheBerkas = _konfig.TtsCache && !_konfig.TtsCacheMemori;
+
+        var jalur = await HasilkanBerkasAsync(teks, tempo, pakaiCacheBerkas, ct)
+            .ConfigureAwait(false);
+        if (jalur is null)
+        {
+            return null;
+        }
+
+        var klip = KlipSuara.DariBerkas(jalur);
+        if (klip is null)
+        {
+            _log?.Invoke($"[tts] WAV tidak terbaca ke memori: {Potong(teks, 40)}");
+            HapusBerkas(jalur);
+            return null;
+        }
+
+        if (_konfig.TtsCacheMemori)
+        {
+            SimpanCacheMemori(kunci, klip);
+            // Berkasnya sudah tidak diperlukan — ini inti permintaan Master:
+            // audio hasil sintesis tidak boleh menumpuk di disk.
+            HapusBerkas(jalur);
+        }
+
+        return klip;
+    }
+
+    /// <summary>
+    /// Siapkan teks yang akan diucapkan: buang tag emosi dan penanda Markdown,
+    /// lalu tentukan tempo dari emosinya.
+    ///
+    /// <para>
+    /// Dua tahap, dan urutannya penting:
+    ///   1. BuangTag   — tag [emosi] dari protokol balasan;
+    ///   2. Bersihkan  — penanda Markdown (*, `, #, —) supaya TTS tidak
+    ///                   mengucapkannya sebagai "bintang" (keluhan Master).
+    /// Dipasang di sini karena INI satu-satunya titik yang dilewati semua
+    /// jalur sintesis — TtsPipeline maupun HasilkanAsync.
+    /// </para>
+    /// </summary>
+    private static bool SiapkanTeks(string kalimat, out string teks, out double? tempo)
+    {
+        teks = TeksUcapan.Bersihkan(SentenceSplitter.BuangTag(kalimat)).Trim();
+        tempo = null;
+        if (teks.Length == 0)
+        {
+            return false;
         }
 
         // Intonasi. Tag emosi dibaca dari teks ASLI (sebelum dibersihkan),
@@ -186,24 +288,26 @@ public sealed class TtsWorker
         // pekerja memakai tempo bawaan sesi. Ini menjaga perilaku lama tetap
         // sama untuk balasan yang tidak bertag.
         var emosi = EmotionParser.ExtractEmotion(kalimat).Emotion;
-        var tempo = Intonasi.Dikenali(emosi) ? Intonasi.Tempo(emosi) : (double?)null;
-        // Jeda eksplisit hanya bila tempo memang dipakai, supaya kalimat tanpa
-        // emosi tidak berubah bentuknya.
-        if (tempo is not null)
+        if (!Intonasi.Dikenali(emosi))
         {
-            teks = Intonasi.BeriJeda(teks, emosi);
+            return true;
         }
 
-        // ── Cache ────────────────────────────────────────────────────────────
-        // Kunci cache HARUS memuat seluruh parameter yang memengaruhi suara.
-        // Kalau tidak, mengubah transpose di .env akan tetap memakai WAV lama
-        // dan Master akan melihat "perubahan tidak berefek" — bug yang sangat
-        // membingungkan dan pernah terjadi di aplikasi lama.
-        var keluaran = _konfig.TtsCache ? JalurCache(teks) : JalurSementara();
-        if (_konfig.TtsCache && WavSah(keluaran))
-        {
-            return keluaran;
-        }
+        tempo = Intonasi.Tempo(emosi);
+        // Jeda eksplisit hanya bila tempo memang dipakai, supaya kalimat tanpa
+        // emosi tidak berubah bentuknya.
+        teks = Intonasi.BeriJeda(teks, emosi);
+        return true;
+    }
+
+    /// <summary>
+    /// Jalankan sintesis untuk satu teks yang sudah bersih dan kembalikan
+    /// jalur berkas WAV-nya. Mengembalikan <c>null</c> kalau gagal.
+    /// </summary>
+    private async Task<string?> HasilkanBerkasAsync(
+        string teks, double? tempo, bool pakaiCache, CancellationToken ct)
+    {
+        var keluaran = pakaiCache ? JalurCache(teks) : JalurSementara();
 
         Directory.CreateDirectory(Path.GetDirectoryName(keluaran)!);
 
@@ -279,21 +383,127 @@ public sealed class TtsWorker
     /// </summary>
     private string JalurCache(string teks)
     {
-        var kunci = string.Join('|',
-            teks,
-            _konfig.Rvc ? "rvc" : "piper",
-            _konfig.RvcModel,
-            _konfig.RvcVersi,
-            _konfig.RvcF0,
-            _konfig.RvcTranspose.ToString(),
-            _konfig.RvcIndeksLaju.ToString("F2"));
-
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(kunci)))[..16];
+        var hash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(KunciCache(teks))))[..16];
         return Path.Combine(_folderCache, $"{hash}.wav");
     }
 
+    /// <summary>
+    /// Kunci cache HARUS memuat seluruh parameter yang memengaruhi suara.
+    /// Kalau tidak, mengubah transpose di .env akan tetap memakai audio lama
+    /// dan Master akan melihat "perubahan tidak berefek" — bug yang sangat
+    /// membingungkan dan pernah terjadi di aplikasi lama.
+    /// </summary>
+    private string KunciCache(string teks) => string.Join('|',
+        teks,
+        _konfig.Rvc ? "rvc" : "piper",
+        _konfig.RvcModel,
+        _konfig.RvcVersi,
+        _konfig.RvcF0,
+        _konfig.RvcTranspose.ToString(),
+        _konfig.RvcIndeksLaju.ToString("F2"));
+
     private static string JalurSementara() =>
         Path.Combine(Path.GetTempPath(), $"sw-tts-{Guid.NewGuid():N}.wav");
+
+    // ── Cache memori ────────────────────────────────────────────────────────
+
+    /// <summary>Ambil klip dari cache memori; memindahnya ke posisi terbaru.</summary>
+    private KlipSuara? AmbilCacheMemori(string kunci)
+    {
+        lock (_kunciCache)
+        {
+            if (!_cacheMemori.TryGetValue(kunci, out var klip))
+            {
+                return null;
+            }
+
+            var simpul = _urutanCache.Find(kunci);
+            if (simpul is not null)
+            {
+                _urutanCache.Remove(simpul);
+                _urutanCache.AddLast(kunci);
+            }
+
+            return klip;
+        }
+    }
+
+    /// <summary>
+    /// Simpan klip ke cache memori, lalu pangkas sampai di bawah batas jumlah
+    /// dan batas bita. Pemangkasan membuang yang paling lama dipakai.
+    /// </summary>
+    private void SimpanCacheMemori(string kunci, KlipSuara klip)
+    {
+        lock (_kunciCache)
+        {
+            if (_cacheMemori.TryGetValue(kunci, out var lama))
+            {
+                _bitaCache -= lama.Ukuran;
+                var simpulLama = _urutanCache.Find(kunci);
+                if (simpulLama is not null) _urutanCache.Remove(simpulLama);
+            }
+
+            _cacheMemori[kunci] = klip;
+            _urutanCache.AddLast(kunci);
+            _bitaCache += klip.Ukuran;
+
+            while (_urutanCache.Count > MaksKlip || _bitaCache > MaksBita)
+            {
+                var tertua = _urutanCache.First;
+                if (tertua is null)
+                {
+                    break;
+                }
+
+                if (_cacheMemori.Remove(tertua.Value, out var buang))
+                {
+                    _bitaCache -= buang.Ukuran;
+                }
+
+                _urutanCache.RemoveFirst();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Kosongkan cache memori. Dipanggil saat pembongkaran supaya byte audio
+       /// tidak menahan RAM yang tidak perlu lagi — ikut menjawab keluhan
+    /// "jangan sampai penuh memorinya".
+    /// </summary>
+    public void BersihkanCache()
+    {
+        int jumlah;
+        long bita;
+        lock (_kunciCache)
+        {
+            jumlah = _cacheMemori.Count;
+            bita = _bitaCache;
+            _cacheMemori.Clear();
+            _urutanCache.Clear();
+            _bitaCache = 0;
+        }
+
+        if (jumlah > 0)
+        {
+            _log?.Invoke($"[tts] cache memori dikosongkan: {jumlah} klip, {bita / 1024} KiB");
+        }
+    }
+
+    /// <summary>Hapus satu berkas WAV; gagal diam-diam (jalur penutupan).</summary>
+    private static void HapusBerkas(string jalur)
+    {
+        try
+        {
+            if (File.Exists(jalur)) File.Delete(jalur);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
 
     private async Task<bool> JalankanAsync(
         string python, IReadOnlyList<string> argumen, string kerja, CancellationToken ct)

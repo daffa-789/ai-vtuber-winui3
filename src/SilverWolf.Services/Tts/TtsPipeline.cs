@@ -1,11 +1,21 @@
 using SilverWolf.Core.Configuration;
 using SilverWolf.Core.Text;
+using SilverWolf.Services.Configuration;
 
 namespace SilverWolf.Services.Tts;
 
 /// <summary>
 /// Sintesis satu kalimat pada satu waktu, lalu SELURUH hasilnya diputar sebagai
-/// satu berkas.
+/// satu klip yang hidup di memori.
+///
+/// <para>
+/// <b>Audio tidak lagi menyentuh disk.</b> Sejak 2026-10-09 hasil sintesis
+/// dibaca ke <see cref="KlipSuara"/> dan berkas WAV-nya dihapus segera; klip
+/// digabung dengan <see cref="GabungWav.GabungkanMemori"/> dan diputar oleh
+/// <see cref="PcmPlayer.PutarKlipAsync"/>. Tidak ada lagi
+/// <c>sw-gabung-*.wav</c> di <c>%TEMP%</c> dan tidak ada folder cache yang
+/// tumbuh terus.
+/// </para>
 ///
 /// <para>
 /// <b>Kenapa tidak diputar sambil disintesis.</b> Sintesis jauh lebih lambat
@@ -24,10 +34,14 @@ public sealed class TtsPipeline : IDisposable
     private readonly TtsWorker? _pekerja;
     private readonly PcmPlayer? _pemutar;
     private readonly Func<bool> _siap;
-    private readonly Func<string, CancellationToken, Task<string?>> _hasilkan;
-    private readonly Func<string, CancellationToken, Action, Task<bool>> _putar;
+
+    /// <summary>Satu kalimat → satu klip WAV di memori (bukan jalur berkas).</summary>
+    private readonly Func<string, CancellationToken, Task<KlipSuara?>> _hasilkan;
+
+    private readonly Func<KlipSuara, CancellationToken, Action, Task<bool>> _putar;
     private readonly Action _buangPemutar;
     private readonly Action<string>? _log;
+    private readonly SuaraArsip? _arsip;
     private readonly object _kunci = new();
     private readonly SemaphoreSlim _mulai = new(1, 1);
     private CancellationTokenSource? _cts;
@@ -39,9 +53,15 @@ public sealed class TtsPipeline : IDisposable
         _log = log;
         _pekerja = new TtsWorker(konfig, log);
         _pemutar = new PcmPlayer(log);
+        // Arsip hanya dibuat kalau VTUBER_TTS_ARSI=ya. Bawaannya MATI sejak
+        // 2026-10-09: Master meminta audio hasil sintesis tidak menumpuk di
+        // disk, dan arsip ini tidak dibuang saat aplikasi ditutup.
+        _arsip = konfig.TtsArsip
+            ? new SuaraArsip(AppPaths.Suara(konfig.Akar), SuaraArsip.MaksBawaan, log)
+            : null;
         _siap = () => _pekerja.Siap;
-        _hasilkan = _pekerja.HasilkanSatuAsync;
-        _putar = (wav, ct, mulai) => _pemutar.PutarAsync(wav, 1.0f, ct, mulai);
+        _hasilkan = _pekerja.HasilkanKlipAsync;
+        _putar = (klip, ct, mulai) => _pemutar.PutarKlipAsync(klip, 1.0f, ct, mulai);
         _buangPemutar = () =>
         {
             // Pekerja Python menetap menahan torch + model di memori. Melepas
@@ -49,21 +69,25 @@ public sealed class TtsPipeline : IDisposable
             // sebagai proses yatim dan menekan RAM — bahan bakar Mode B.
             _pekerja.Matikan();
             _pemutar.Dispose();
+            // Byte audio tidak lagi diperlukan sesudah jendela ditutup.
+            _pekerja.BersihkanCache();
         };
     }
 
     // Titik injeksi untuk uji antrean tanpa Python, perangkat audio, atau model.
     internal TtsPipeline(
-        Func<string, CancellationToken, Task<string?>> hasilkan,
-        Func<string, CancellationToken, Action, Task<bool>> putar,
+        Func<string, CancellationToken, Task<KlipSuara?>> hasilkan,
+        Func<KlipSuara, CancellationToken, Action, Task<bool>> putar,
         Action? buangPemutar = null,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        SuaraArsip? arsip = null)
     {
         _siap = () => true;
         _hasilkan = hasilkan;
         _putar = putar;
         _buangPemutar = buangPemutar ?? (() => { });
         _log = log;
+        _arsip = arsip;
     }
 
     /// <summary>Sinyal aktivitas pemutaran untuk LipSync (belum RMS nyata).</summary>
@@ -165,7 +189,7 @@ public sealed class TtsPipeline : IDisposable
             // membuat pemutar selalu kehabisan bahan dan berhenti di setiap tanda
             // baca — itulah "dia ngomong setengah-setengah" yang dikeluhkan
             // Master. Menyintesis semuanya dulu menghapus jeda itu.
-            var wavs = new List<string>();
+            var klips = new List<KlipSuara>();
             var total = potong.Kalimat.Count;
             var selesai = 0;
             foreach (var kalimat in potong.Kalimat)
@@ -173,11 +197,11 @@ public sealed class TtsPipeline : IDisposable
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    var wav = await _hasilkan(kalimat, ct).ConfigureAwait(false);
+                    var klip = await _hasilkan(kalimat, ct).ConfigureAwait(false);
                     ct.ThrowIfCancellationRequested();
-                    if (wav is not null)
+                    if (klip is not null)
                     {
-                        wavs.Add(wav);
+                        klips.Add(klip);
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -193,56 +217,60 @@ public sealed class TtsPipeline : IDisposable
                 LaporProgres(progres, selesai, total);
             }
 
-            if (wavs.Count == 0)
+            if (klips.Count == 0)
             {
-                // Tidak ada satu pun WAV: biarkan finally menandai tidak siap.
+                // Tidak ada satu pun klip: biarkan finally menandai tidak siap.
                 return;
             }
 
-            // Gabung menjadi satu berkas. Kalau formatnya ternyata tidak seragam,
-            // pemanggil jatuh ke pemutaran berurutan — lebih baik ada jeda
-            // daripada tidak ada suara sama sekali.
-            var gabung = GabungWav.Gabungkan(wavs, Path.GetTempPath());
-            if (gabung is null)
+            // Gabung menjadi satu klip, SELURUHNYA di memori — tidak ada lagi
+            // berkas perantara sw-gabung-*.wav di %TEMP%. Kalau formatnya
+            // ternyata tidak seragam, pemanggil jatuh ke pemutaran berurutan —
+            // lebih baik ada jeda daripada tidak ada suara sama sekali.
+            var gabung = klips.Count > 1
+                ? GabungWav.GabungkanMemori(klips.Select(k => k.Data).ToList())
+                : null;
+
+            if (klips.Count > 1 && gabung is null)
             {
-                _log?.Invoke($"[tts] {wavs.Count} WAV tidak bisa digabung; diputar berurutan");
+                _log?.Invoke($"[tts] {klips.Count} klip tidak bisa digabung; diputar berurutan");
             }
-            else if (wavs.Count > 1)
+            else if (gabung is not null)
             {
-                _log?.Invoke($"[tts] {wavs.Count} kalimat digabung menjadi satu berkas");
+                _log?.Invoke($"[tts] {klips.Count} kalimat digabung di memori");
             }
 
-            try
+            // Arsipkan balasan utuh (hanya kalau VTUBER_TTS_ARSI=ya). Kegagalan
+            // penggabungan dilewati: mengarsipkan sebagian balasan lebih
+            // menyesatkan daripada tidak mengarsipkan sama sekali.
+            if (gabung is not null && _arsip is not null)
             {
-                var berkasPutar = gabung is null ? wavs : new List<string> { gabung };
-                foreach (var wav in berkasPutar)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    try
-                    {
-                        var berhasil = await _putar(wav, ct, () =>
-                        {
-                            if (!ct.IsCancellationRequested) siap.TrySetResult(true);
-                        }).ConfigureAwait(false);
-                        if (!berhasil && !ct.IsCancellationRequested)
-                            _log?.Invoke("[tts] satu berkas gagal diputar; lanjut berikutnya");
-                    }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception galat)
-                    {
-                        _log?.Invoke($"[tts] berkas gagal diputar: {galat.Message}");
-                    }
-                }
+                _arsip.Simpan(new KlipSuara(gabung, "balasan"));
             }
-            finally
+
+            var daftarPutar = gabung is not null
+                ? new List<KlipSuara> { new(gabung, "balasan") }
+                : klips;
+
+            foreach (var klip in daftarPutar)
             {
-                // Berkas gabungan hanya perantara; WAV aslinya tetap di cache.
-                if (gabung is not null)
+                ct.ThrowIfCancellationRequested();
+                try
                 {
-                    try { File.Delete(gabung); } catch (IOException) { }
+                    var berhasil = await _putar(klip, ct, () =>
+                    {
+                        if (!ct.IsCancellationRequested) siap.TrySetResult(true);
+                    }).ConfigureAwait(false);
+                    if (!berhasil && !ct.IsCancellationRequested)
+                        _log?.Invoke("[tts] satu klip gagal diputar; lanjut berikutnya");
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception galat)
+                {
+                    _log?.Invoke($"[tts] klip gagal diputar: {galat.Message}");
                 }
             }
         }

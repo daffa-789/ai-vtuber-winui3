@@ -35,6 +35,79 @@ internal static class GabungWav
     /// cache tidak terbuang percuma.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Gabungkan beberapa WAV yang sudah ada di memori menjadi satu WAV di
+    /// memori. Mengembalikan <c>null</c> kalau penggabungan tidak mungkin
+    /// (format tidak seragam, atau ada isi yang bukan WAV).
+    ///
+    /// <para>
+    /// Inilah jalur utama sejak 2026-10-09: audio tidak lagi ditulis ke
+    /// <c>%TEMP%</c> hanya untuk digabung. Pemanggil yang mendapat
+    /// <c>null</c> memutar klip satu per satu seperti sebelumnya.
+    /// </para>
+    /// </summary>
+    public static byte[]? GabungkanMemori(IReadOnlyList<byte[]> berkas)
+    {
+        if (berkas.Count == 0)
+        {
+            return null;
+        }
+
+        if (berkas.Count == 1)
+        {
+            return KlipSuara.BerbentukWav(berkas[0]) ? berkas[0] : null;
+        }
+
+        var bagian = new List<Potongan>(berkas.Count);
+        foreach (var isi in berkas)
+        {
+            var potongan = BacaBytes(isi);
+            if (potongan is null)
+            {
+                return null;
+            }
+
+            bagian.Add(potongan.Value);
+        }
+
+        var format = bagian[0].Format;
+        foreach (var potongan in bagian)
+        {
+            if (!potongan.Format.AsSpan().SequenceEqual(format))
+            {
+                return null;
+            }
+        }
+
+        var total = 0;
+        foreach (var potongan in bagian)
+        {
+            total += potongan.Data.Length;
+        }
+
+        // 44 bita header + data; format bisa lebih panjang dari 16 (WAVE_FORMAT_EXTENSIBLE).
+        var keluaran = new byte[44 + format.Length - 16 + total];
+        using var aliran = new MemoryStream(keluaran);
+        using var tulis = new BinaryWriter(aliran, Encoding.ASCII);
+
+        tulis.Write(Encoding.ASCII.GetBytes("RIFF"));
+        tulis.Write(36 + format.Length + total);
+        tulis.Write(Encoding.ASCII.GetBytes("WAVE"));
+
+        tulis.Write(Encoding.ASCII.GetBytes("fmt "));
+        tulis.Write(format.Length);
+        tulis.Write(format);
+
+        tulis.Write(Encoding.ASCII.GetBytes("data"));
+        tulis.Write(total);
+        foreach (var potongan in bagian)
+        {
+            tulis.Write(potongan.Data);
+        }
+
+        return keluaran;
+    }
+
     public static string? Gabungkan(IReadOnlyList<string> berkas, string folder)
     {
         if (berkas.Count == 0)
@@ -113,7 +186,7 @@ internal static class GabungWav
 
     private readonly record struct Potongan(byte[] Format, byte[] Data);
 
-    /// <summary>Baca chunk <c>fmt </c> dan <c>data</c> dari satu WAV.</summary>
+    /// <summary>Baca chunk <c>fmt </c> dan <c>data</c> dari satu berkas WAV.</summary>
     private static Potongan? Baca(string jalur)
     {
         byte[] isi;
@@ -126,6 +199,12 @@ internal static class GabungWav
             return null;
         }
 
+        return BacaBytes(isi);
+    }
+
+    /// <summary>Baca chunk <c>fmt </c> dan <c>data</c> dari isi WAV di memori.</summary>
+    private static Potongan? BacaBytes(byte[] isi)
+    {
         if (isi.Length < 44
             || !Cocok(isi, 0, "RIFF")
             || !Cocok(isi, 8, "WAVE"))
