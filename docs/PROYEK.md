@@ -18,7 +18,7 @@ M10, M12–M14 belum.
 | Aplikasi target | `C:\Users\Daffa\Desktop\AI Vtuber Project\AI Vtuber WINUI3\` |
 | Aplikasi sumber | Electron + Vue 3 + server Node — **sudah dihapus**; aset & dokumen sudah dipindah, sumber diarsipkan ke `docs/arsip/sumber-web/` |
 | Verifikasi terakhir | build x64 **0 error / 0 warning** · **114 unit test lulus** · aplikasi dijalankan dan model Live2D tampil · **rantai suara terbukti** (`tools/tts/`, hasil acuan `contoh/04-transpose-3.wav`) · **M11 tersambung** — memutar audio sungguhan, `crash.log` memuat `tts: siap` |
-| ⚠️ Cacat aktif | aplikasi **mati senyap** — **tiga mode** teridentifikasi (A: kompilasi shader, **terbukti INTERMITEN**, B: memori habis, C: saat Vulkan mulai inferensi). §8.1 |
+| ⚠️ Cacat aktif | aplikasi **mati senyap**. **Mode A (kompilasi shader) kemungkinan ARTEFAK sandbox sesi AI** — 2 dari 4 saat diuji dari sesi AI, 0 dari 5 saat isolasi dimatikan; **belum terbukti, Master harus menjalankan `VTUBER_STUB=ya python tools/uji-kematian.py 5 70` dari terminal sendiri**. Mode B (memori habis) dan C (Vulkan mulai inferensi) tetap nyata. §8.1 |
 
 ---
 
@@ -55,8 +55,16 @@ STATUS: M0-M2, M4-M9 selesai. M8 berjalan (Live2D tampil + efek hidup).
     HATI-HATI: kesimpulan lama "bukan rebutan GPU" itu benar untuk A/B tetapi
     Mode C justru mati tepat ketika Vulkan bekerja -> jangan digeneralisasi.
     GPU = Intel Iris Xe (terintegrasi, memori bersama RAM 16 GB, ~3,7 GB bebas).
-    Baca docs/PROYEK.md §8.1 (termasuk pembaruan 2026-10-09) sebelum apa pun.
+    Baca docs/PROYEK.md §8.1 (termasuk pembaruan 2026-10-09 malam) sebelum apa pun.
     Jangan bangun fitur di atas aplikasi yang belum bisa bertahan hidup.
+
+    ⚠️ PENTING SOAL MODE A: kematian saat kompilasi shader (log beku ~13.447 B,
+    exit 0, tanpa `PROSES KELUAR`) hanya muncul saat uji dijalankan dari SESI AI.
+    Dijalankan dengan isolasi sandbox dimatikan: 0 dari 5. Karena semua pengamatan
+    Mode A sejak awal berasal dari sesi AI, mode ini mungkin ARTEFAK, bukan bug
+    aplikasi. Sebelum mengubah kode apa pun untuk Mode A, minta Master menjalankan
+    sendiri: `VTUBER_STUB=ya python tools/uji-kematian.py 5 70`.
+    Jangan buang waktu mengejar mode yang mungkin tidak ada di mesin Master.
 
 PEKERJAAN SUARA (M11) — rantainya SUDAH JALAN, jangan diriset ulang:
   Resep lengkap + profil terkunci : tools/tts/README.md
@@ -1267,6 +1275,62 @@ tersimpan dulu sebelum membuka ulang.
 
 > Catatan untuk sesi berikutnya: proyek ini **murni C# + C++**. Jangan bawa
 > perkakas JS/npm ke sini, dan jangan menuliskannya ke catatan proyek.
+
+#### 🔴 Pembaruan 2026-10-09 (malam) — Mode A mungkin ARTEFAK LINGKUNGAN UJI
+
+Dua fakta baru, keduanya dari `tools/uji-kematian.py` versi 3 (yang kini membaca
+penanda `PROSES KELUAR`):
+
+**1. Mode A diakhiri dari LUAR CLR — ini akhirnya terjawab.** Pada dua kematian
+Mode A, log berhenti di titik yang sama seperti sebelumnya
+(`MuatBerkas dipanggil: FrameworkShaders/CubismBlendMode.fx`, **13.447 bita**)
+dan **`PROSES KELUAR` TIDAK ADA**. Artinya `AppDomain.ProcessExit` tidak pernah
+menyala → proses diakhiri `TerminateProcess` dari luar, bukan oleh CLR. Ini
+menyingkirkan `Main` kembali normal, `Environment.Exit`, dan exception tak
+tertangani — ketiganya akan memicu penanda itu.
+
+**2. Laju Mode A bergantung pada CARA UJI DIJALANKAN.** Dua rangkaian uji
+identik (aplikasi sama, `VTUBER_STUB=ya` sehingga model 5 GB tidak dimuat,
+5 × 70 dtk):
+
+| Cara jalan | Mode A | Catatan |
+|---|---|---|
+| Lewat perintah biasa | **2 dari 4** | log 13.447 B, tanpa `PROSES KELUAR` |
+| Dengan isolasi sandbox dimatikan | **0 dari 5** | semuanya melewati kompilasi shader, ws puncak ~1,2 GB |
+
+**Dugaan yang menguat:** Mode A bukan bug aplikasi, melainkan **proses yang
+dibunuh oleh pengawas sandbox** tempat sesi AI menjalankan uji. Petunjuknya
+bertumpuk:
+- kematian selalu tepat di pembacaan berkas `FrameworkShaders/*.fx`, dan sandbox
+  memang mengawasi akses berkas;
+- exit code **0**, nol entri Event Log, nol dump — persis `TerminateProcess`
+  yang rapi, bukan crash;
+- `IsProcessInJob` mengembalikan **True** untuk proses sesi ini: uji memang
+  berjalan di dalam job object;
+- memori bebas saat Mode A **tidak** rendah (4,8 GB dan 8,2 GB) → bukan OOM;
+- **semua** pengamatan Mode A sejak awal (§8.1 "empat kali berturut-turut",
+  dan `jalan-1..9`) dilakukan oleh sesi AI, jadi semuanya mungkin berbagi
+  artefak yang sama.
+
+**⚠️ BELUM TERBUKTI — jangan ditutup dulu.** Yang memisahkannya hanya satu
+percobaan: **jalankan uji yang sama dari terminal Master sendiri**, bukan dari
+sesi AI. Perintahnya:
+
+```bash
+cd "AI Vtuber WINUI3"
+VTUBER_STUB=ya python tools/uji-kematian.py 5 70
+```
+
+- Kalau **0 kematian** → Mode A memang artefak; §8.1 menyusut jadi dua mode
+  (B: kehabisan memori, C: Vulkan mulai menghitung) dan prioritasnya berubah.
+- Kalau **ada kematian** → Mode A nyata, dan bukti barunya adalah
+  `PROSES KELUAR` yang tidak ada.
+
+**Catatan penting soal penutupan jendela.** Dua jalan lain berakhir
+`DITUTUP-bersih` — log memuat `shutdown: selesai` **dan** `PROSES KELUAR`.
+Itu `MainWindow.OnClosed`, bukan kematian. Alat uji sudah memisahkannya
+otomatis; **jangan hitung itu sebagai crash** (jebakan lama yang pernah
+membuat angka "mati 5 dari 10" salah).
 
 ### 8.2 ✅ SELESAI (2026-10-09) — LipSync dari amplitudo audio NYATA
 
