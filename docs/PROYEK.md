@@ -146,7 +146,7 @@ Windows native, **tanpa kehilangan perilaku yang dirasakan pengguna**.
 | M8 | Renderer Live2D native (render, fit, fokus, motion, efek hidup) | 🟢 **Berjalan** — sisa: LipSync |
 | M9 | `MainWindow`, `CompanionViewModel`, 4 view, `AssetLocator` | ✅ |
 | M10 | Tema, blur, animasi, font | ⬜ |
-| M11 | TTS: phonemizer, Piper, NAudio, lip-sync | 🟡 **rantai terbukti** (`tools/tts/`), belum diintegrasikan |
+| M11 | TTS: phonemizer, Piper, NAudio, lip-sync | 🟢 **terintegrasi & terdengar** — sisa: LipSync (§8.2) |
 | M12 | Tray, hotkey, single-instance, close-to-tray | ⬜ |
 | M13 | Integrasi fitur end-to-end | ⬜ |
 | M14 | Rilis | ⬜ |
@@ -191,6 +191,50 @@ rantai dijalankan dengan perintah persis seperti yang dikirim aplikasi →
 
 **Blocker yang masih nyata:** hanya §8.1 (kematian senyap, tiga mode).
 Integrasi sudah jalan, tetapi aplikasi masih bisa mati senyap — lihat §8.1.
+
+#### Pekerja TTS menetap (komit `dfc1125`, 2026-10-09)
+
+Masalah yang berhasil ditutup: cara lama menjalankan **proses Python baru per
+kalimat**, sehingga seluruh model RVC dimuat ulang tiap kali. Diukur di mesin
+ini (4 core, CPU saja):
+
+| Tahap | Waktu |
+|---|---|
+| muat RVC + HuBERT | 0,6–1,0 dtk |
+| **inferensi pertama** (memuat rmvpe) | **21–24 dtk** |
+| inferensi berikutnya | 6,1–13,3 dtk |
+
+Balasan dua kalimat menghabiskan ~45 dtk dan **menembus batas 40 dtk**, jadi
+antrean dibatalkan sebelum satu pun WAV sampai ke pemutar — gejalanya
+"menyiapkan suara…" tanpa henti, tanpa suara. Kini satu pekerja Python menetap
+memuat model **sekali per sesi**:
+
+| Berkas | Isi |
+|---|---|
+| `src/SilverWolf.Services/Tts/PekerjaTts.cs` | pekerja menetap: pipa bernama + protokol JSON satu baris |
+| `tools/tts/pekerja_tts.py` | sisi Python; `pasang_patch_torch()` (`weights_only=False`) |
+| `tools/uji-tts-integrasi/` | penguji integrasi — memanggil `TtsWorker` dari rakitan yang sama |
+
+**Protokol lewat pipa bernama, BUKAN stdout.** Pustaka pihak ketiga mencetak
+sendiri ke stdout (`rvc_python/configs/config.py:93`), jadi stdout tidak pernah
+bisa dipakai sebagai jalur data.
+
+**Verifikasi** (`tools/uji-tts-integrasi`, `outputs/uji-tts-pekerja.log`):
+kalimat 1 **20,1 dtk** (muat rmvpe di dalamnya), kalimat 2 **6,0 dtk**, total
+**26,1 dtk untuk 2 kalimat**, audio 2,26 + 2,32 dtk @40 kHz, berhenti bersih.
+
+⚠️ **Jebakan yang menghabiskan waktu — jangan diulang.** Kalau pekerja menetap
+bermasalah, periksa urutan ini sebelum menebak yang lain:
+
+| Gejala | Sebab |
+|---|---|
+| proses diam, **nol baris log**, harus dibunuh | `HasilkanAsync` deadlock dengan dirinya sendiri: ia memegang `_kunci` lalu memanggil `NyalakanAsync` yang meminta `_kunci` sama. Bendera `_nyalaDalam` **harus** disetel sebelum pemanggilan, bukan di dalam `NyalakanAsync` |
+| model termuat (0,5 dtk) tetapi induk menunggu batas penuh lalu gagal | nama pipa harus diawali `\\.\pipe\`; tanpa itu Windows menganggapnya berkas biasa di direktori kerja. Arah pipa juga harus cocok: server `PipeDirection.InOut` untuk klien `O_RDWR` |
+| `json.loads` menolak baris pertama: "Unexpected UTF-8 BOM" | `StandardInputEncoding = Encoding.UTF8` menulis preamble; pakai `new UTF8Encoding(false)` **dan** `lstrip("\ufeff")` di sisi Python |
+
+Catatan: `uji-tts-integrasi` membangun `EnvSource` sendiri, jadi ia berjalan
+pada **nilai bawaan** (`batas=40`, `siap=120`), bukan `.env` (75/180). Jangan
+terkecoh baris pertama lognya.
 
 ---
 
@@ -1140,8 +1184,16 @@ dihindari) atau jalur sederhana: hitung amplitudo RMS per bingkai dari buffer
 audio yang sedang diputar, lalu `AddParameterValue(ParamMouthOpenY, a)`. Jalur
 kedua lebih cocok dengan pola `SiapkanEfek()` yang sudah ada.
 
-**Prasyarat:** audio harus sudah diputar di dalam aplikasi. Jadi §8.2 menunggu
-integrasi TTS (M11) selesai lebih dulu.
+**Prasyarat TERBUKTI TERPENUHI (2026-10-09).** Integrasi TTS (M11) selesai —
+pekerja menetap menghasilkan WAV nyata dan `PcmPlayer` sudah memunculkan
+`LevelBerubah` tiap 16 ms. Jadi §8.2 **tidak lagi menunggu M11**; ini pekerjaan
+mandiri berikutnya, dan jalurnya sudah ada tinggal disambungkan:
+amplitudo RMS per bingkai → `AddParameterValue(ParamMouthOpenY, a)` di dalam
+`SiapkanEfek()`.
+
+Yang belum dikonfirmasi: audio **terdengar** dari speaker pada mesin Master
+(integrasi terbukti di tingkat berkas WAV dan log, bukan telinga). Konfirmasi
+terakhir harus dilakukan Master dengan menjalankan aplikasi.
 
 ### 8.3 ✅ SELESAI — ukuran jendela 20% lebih kecil daripada aplikasi lama
 
@@ -1218,13 +1270,14 @@ test. Perlu satu jalan nyata yang menunjukkan "MEMUAT VULKAN…" di UI.
 
 1. **§8.1 — hentikan kematian senyap.** Ini yang memblokir segalanya. Mulai dari
    langkah `.env` yang paling murah, satu perubahan per uji.
-2. **§8.6 — perbaiki pengenalan 503.** Kecil, aman, dan langsung menghilangkan
-   kebingungan "OFFLINE padahal sedang memuat".
-3. **M11 — integrasikan rantai suara yang sudah terbukti.** Rantainya tidak
-   perlu diriset lagi: `tools/tts/README.md` sudah memuat cara pakai, profil
-   terkunci, dan angka latensi. Yang tinggal: `SilverWolf.TtsWorker`
-   (OutputType Exe, **tanpa** WindowsAppSDK, `Microsoft.ML.OnnxRuntime` di sana
-   saja), pemutaran NAudio, cache, lalu LipSync (§8.2).
+2. **§8.2 — LipSync.** ✅ **M11 selesai** (komit `dfc1125`): pekerja menetap
+   menghasilkan WAV nyata, `PcmPlayer` sudah memunculkan `LevelBerubah` tiap
+   16 ms. Rantainya tidak perlu diriset lagi — `tools/tts/README.md` memuat cara
+   pakai, profil terkunci, dan angka latensi. Yang tinggal: RMS per bingkai →
+   `AddParameterValue(ParamMouthOpenY, a)`.
+3. **§8.6 — verifikasi pengenalan 503 terhadap llama-server sungguhan.**
+   Kodenya sudah dikunci unit test; yang kurang satu jalan nyata yang
+   menunjukkan "MEMUAT VULKAN…" di UI.
 4. **M10 — tema, blur, animasi, font.** Uji risiko variable font.
 5. **M12 — tray, hotkey, single-instance, close-to-tray.**
 6. **M13 — integrasi end-to-end.**
