@@ -34,7 +34,8 @@ public sealed class AgentService
         TieredMemoryEngine? memoryEngine = null,
         MasterProfile? profil = null,
         bool localPrompt = true,
-        Action<Exception>? onError = null)
+        Action<Exception>? onError = null,
+        Action<string>? onLog = null)
     {
         _provider = provider;
         _persona = persona;
@@ -44,6 +45,7 @@ public sealed class AgentService
         _profil = profil;
         LocalPrompt = provider.Id == "ollama" ? false : localPrompt;
         OnError = onError;
+        OnLog = onLog;
     }
 
     /// <summary>
@@ -64,6 +66,13 @@ public sealed class AgentService
 
     /// <summary>Pengganti <c>console.error('memori:', error)</c>.</summary>
     public Action<Exception>? OnError { get; set; }
+
+    /// <summary>
+    /// Saluran catatan biasa untuk hal yang bukan galat — mis. jejak bahwa
+    /// mesin cemburu benar-benar menyala pada satu giliran. Tanpa ini fitur
+    /// baru hanya bisa diverifikasi lewat suara, dan itu mahal.
+    /// </summary>
+    public Action<string>? OnLog { get; set; }
 
     private void Laporkan(Exception error) => OnError?.Invoke(error);
 
@@ -167,6 +176,8 @@ public sealed class AgentService
             .Tambah(new AlatWaktu(_profil))
             .JalankanOtomatis();
 
+        var konteksCemburu = SusunCemburu(riwayat);
+
         var pesan = new List<ChatMessage>
         {
             new("system", PersonaComposer.GabungSystem(
@@ -176,7 +187,8 @@ public sealed class AgentService
                 LocalPrompt,
                 mem.KizunaContext,
                 mem.MidTermPrompt,
-                konteksAlat)),
+                konteksAlat,
+                konteksCemburu)),
         };
 
         pesan.AddRange(riwayat.Where(m => m.Role != "system"));
@@ -266,6 +278,100 @@ public sealed class AgentService
         {
             yield return potongan;
         }
+    }
+
+    /// <summary>
+    /// Susun konteks cemburu untuk giliran ini, atau string kosong bila tidak
+    /// ada karakter cewek yang disebut.
+    ///
+    /// <para>
+    /// <b>Kenapa menghitung dari riwayat, bukan menyimpan keadaan.</b> Mesin ini
+    /// tidak punya penyimpanan sendiri, jadi "sudah berapa kali berturut-turut"
+    /// dihitung dengan melihat ke belakang pada riwayat yang memang sudah
+    /// dikirim ke backend. Dengan begitu tidak ada riwayat cemburu yang menumpuk
+    /// antar-sesi, dan perilakunya bisa diprediksi dari satu percakapan saja.
+    /// </para>
+    ///
+    /// <para>
+    /// Hitungannya melihat giliran <c>user</c> sebelumnya yang juga menyebut
+    /// karakter cewek. Kalau giliran itu ada, berarti ini kelanjutan topik yang
+    /// sama dan nada harus melunak — persis yang mencegah Silver Wolf mengulang
+    /// cemburu sampai menjemukan.
+    /// </para>
+    /// </summary>
+    private string? SusunCemburu(IReadOnlyList<ChatMessage> riwayat)
+    {
+        var ucapan = UcapanPenggunaTerakhir(riwayat);
+        if (ucapan is null)
+        {
+            return null;
+        }
+
+        var nama = Cemburu.Sebutan(ucapan);
+        if (nama.Count == 0)
+        {
+            return null;
+        }
+
+        var berturut = HitungCemburuBerturut(riwayat);
+        var prompt = Cemburu.BuatPrompt(nama, berturut);
+
+        // Satu baris log supaya Master bisa melihat fiturnya benar-benar jalan.
+        OnLog?.Invoke(Cemburu.Ringkas(nama, berturut));
+        return prompt;
+    }
+
+    /// <summary>
+    /// Hitung berapa giliran <c>user</c> berturut-turut (dari yang terakhir ke
+    /// belakang) yang menyebut karakter cewek. Berhenti pada giliran user
+    /// pertama yang tidak menyebut.
+    /// </summary>
+    private static int HitungCemburuBerturut(IReadOnlyList<ChatMessage> riwayat)
+    {
+        var hitung = 0;
+
+        // Lewati giliran user terakhir — itu yang sedang diproses sekarang,
+        // bukan riwayat.
+        var mulai = riwayat.Count - 1;
+        if (mulai >= 0 && riwayat[mulai].Role == "user")
+        {
+            mulai--;
+        }
+
+        for (var i = mulai; i >= 0; i--)
+        {
+            if (riwayat[i].Role != "user")
+            {
+                continue;
+            }
+
+            if (!Cemburu.AdaSebutan(riwayat[i].Content))
+            {
+                break;
+            }
+
+            hitung++;
+        }
+
+        return hitung;
+    }
+
+    /// <summary>
+    /// Ucapan terakhir dari Master dalam riwayat, atau null bila belum ada.
+    /// Dipakai sebagai sumber deteksi — bukan disimpan, supaya tidak ada
+    /// keadaan yang bocor antar-sesi.
+    /// </summary>
+    private static string? UcapanPenggunaTerakhir(IReadOnlyList<ChatMessage> riwayat)
+    {
+        for (var i = riwayat.Count - 1; i >= 0; i--)
+        {
+            if (riwayat[i].Role == "user" && !string.IsNullOrWhiteSpace(riwayat[i].Content))
+            {
+                return riwayat[i].Content;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Port <c>persist(riwayat, jawaban, mem)</c>.</summary>

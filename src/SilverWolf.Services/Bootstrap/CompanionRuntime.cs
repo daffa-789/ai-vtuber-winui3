@@ -151,7 +151,10 @@ public sealed class CompanionRuntime : IAsyncDisposable
             memory,
             profil,
             localPrompt: konfig.LlmProvider != "ollama",
-            onError: onError);
+            onError: onError,
+            // Jejak cemburu ikut ke log supaya Master bisa memastikan fiturnya
+            // menyala tanpa harus mendengar suaranya.
+            onLog: log);
 
         var backend = new CompanionBackend(konfig, agent, pilihan.Provider, vault, kizuna, pilihan.ModelName);
 

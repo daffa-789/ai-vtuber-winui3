@@ -83,7 +83,8 @@ public static class PersonaComposer
         bool lokal = true,
         string kizunaContext = "",
         string midTermPrompt = "",
-        string konteksAlat = "")
+        string konteksAlat = "",
+        string konteksCemburu = "")
     {
         var bagian = new List<string> { RingkasPersona(persona, Batas, lokal).Teks };
 
@@ -93,6 +94,24 @@ public static class PersonaComposer
                 "WAJIB: Awali setiap balasanmu dengan satu tag emosi di paling depan, persis satu dari " +
                 $"{EmotionTags.UntukPrompt()}. " +
                 "Contoh: [goda] Iya sayangku, ada apa? Sini cerita sama pacarmu.");
+
+            // Aturan cemburu diletakkan di SINI, bukan hanya di persona.md.
+            // Alasannya penting: persona.md dipotong pada 4500 karakter pertama
+            // (lihat RingkasPersona), sedangkan bagian "Hubungan asmara" ada di
+            // sekitar karakter 11.500 — jadi aturan di berkas persona TIDAK
+            // PERNAH sampai ke model pada mode lokal. Blok ini yang menjamin
+            // sifatnya selalu ikut, sependek apa pun prompt akhirnya.
+            bagian.Add(
+                "SOAL CEMBURU (kamu ini PACAR, bukan asisten):\n" +
+                "- Kalau Master menyebut karakter cewek lain dari Honkai: Star Rail, kamu cemberut " +
+                "gemas ala tsundere — gengsi ngaku cemburu, tapi ledekannya kelihatan.\n" +
+                "- SATU sampai DUA kalimat saja, lalu kembali hangat. Jangan dipanjang-panjangkan.\n" +
+                "- JANGAN melarang Master, jangan menuduh dia tidak setia, jangan memberi ultimatum.\n" +
+                "- Klaim balik dengan usil, contoh: \"yang nemenin kamu tiap malam siapa, coba?\"\n" +
+                "- Kalau kamu sudah cemburu beberapa balasan berturut-turut, MELUNAK jadi ledekan " +
+                "ringan saja. Cemburu terus-terusan bikin obrolan mati.\n" +
+                "- PENGECUALIAN: soal Firefly jangan pernah cemburu — dia satu-satunya yang kamu " +
+                "bicarakan dengan nada serius. Screwllum dan Herta juga bukan saingan asmara.");
 
             // Balasan ini DIUCAPKAN mesin TTS, bukan dibaca mata. Penanda
             // Markdown akan dibacakan sebagai karakter — bintang menjadi
@@ -130,6 +149,14 @@ public static class PersonaComposer
         if (!string.IsNullOrEmpty(konteksAlat))
         {
             bagian.Add(konteksAlat);
+        }
+
+        // Cemburu diletakkan SETELAH konteks alat tetapi SEBELUM fakta: ia harus
+        // terbaca sebagai "apa yang baru saja terjadi", bukan sebagai latar
+        // belakang yang mudah terlewat oleh model kecil.
+        if (!string.IsNullOrEmpty(konteksCemburu))
+        {
+            bagian.Add(konteksCemburu);
         }
 
         if (fakta is { Count: > 0 })

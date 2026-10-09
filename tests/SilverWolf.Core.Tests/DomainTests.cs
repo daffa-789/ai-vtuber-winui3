@@ -176,6 +176,67 @@ public class DomainTests
         Assert.Contains("## Konteks Sesi Obrolan", sistem, StringComparison.Ordinal);
     }
 
+    // ── Cemburu ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void GabungSystem_AturanCemburuSelaluAdaDiModeLokal()
+    {
+        // Aturan ini HARUS disuntik dari kode, bukan hanya ditulis di
+        // persona.md: persona dipotong pada 4500 karakter sedangkan bagian
+        // "Hubungan asmara" ada di ~11.500, jadi salinan di berkas persona
+        // tidak pernah sampai ke model pada mode lokal.
+        var sistem = PersonaComposer.GabungSystem(
+            PersonaContoh, [], null, lokal: true);
+
+        Assert.Contains("SOAL CEMBURU", sistem, StringComparison.Ordinal);
+        Assert.Contains("PACAR, bukan asisten", sistem, StringComparison.Ordinal);
+        Assert.Contains("Firefly", sistem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GabungSystem_AturanCemburuTetapAdaWalauPersonaTerpotong()
+    {
+        // Persona sengaja dibuat panjang supaya RingkasPersona memotongnya.
+        var personaPanjang = string.Join("\n\n",
+            "## Siapa kamu\nAku Silver Wolf.",
+            new string('x', 6000));
+
+        var sistem = PersonaComposer.GabungSystem(
+            personaPanjang, [], null, lokal: true);
+
+        Assert.Contains("SOAL CEMBURU", sistem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GabungSystem_KonteksCemburuDisisipkanSaatAda()
+    {
+        var sistem = PersonaComposer.GabungSystem(
+            PersonaContoh, [], null, lokal: true,
+            konteksCemburu: "[KONDISI: Master sedang membicarakan Kafka kepadamu]");
+
+        Assert.Contains("Master sedang membicarakan Kafka", sistem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GabungSystem_TanpaKonteksCemburuTidakAdaBlokKondisi()
+    {
+        var sistem = PersonaComposer.GabungSystem(
+            PersonaContoh, [], null, lokal: true);
+
+        Assert.DoesNotContain("[KONDISI:", sistem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GabungSystem_KonteksCemburuTidakMenghapusAturanSuara()
+    {
+        var sistem = PersonaComposer.GabungSystem(
+            PersonaContoh, [], null, lokal: true,
+            konteksCemburu: "[KONDISI: Master sedang membicarakan Kafka kepadamu]");
+
+        Assert.Contains("ATURAN SUARA", sistem, StringComparison.Ordinal);
+        Assert.Contains("SOAL CEMBURU", sistem, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void GabungSystem_MenyisipkanKonteksAlatTepatSebelumFakta()
     {
